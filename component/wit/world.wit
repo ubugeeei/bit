@@ -1,0 +1,84 @@
+package bit:git;
+
+interface filesystem {
+  mkdir-p: func(path: string) -> result<_, string>;
+  write-file: func(path: string, content: list<u8>) -> result<_, string>;
+  write-string: func(path: string, content: string) -> result<_, string>;
+  remove-file: func(path: string) -> result<_, string>;
+  remove-dir: func(path: string) -> result<_, string>;
+  read-file: func(path: string) -> result<list<u8>, string>;
+  readdir: func(path: string) -> result<list<string>, string>;
+  is-dir: func(path: string) -> bool;
+  is-file: func(path: string) -> bool;
+}
+
+interface http-client {
+  record http-response {
+    code: s32,
+    headers: list<tuple<string, string>>,
+  }
+
+  http-get: func(url: string, headers: list<tuple<string, string>>)
+    -> result<tuple<http-response, list<u8>>, string>;
+
+  http-post: func(url: string, body: list<u8>, headers: list<tuple<string, string>>)
+    -> result<tuple<http-response, list<u8>>, string>;
+}
+
+interface environment {
+  get-env: func(name: string) -> option<string>;
+  now: func() -> s64;
+}
+
+interface git-ops {
+  record status-result {
+    staged-added: list<string>,
+    staged-modified: list<string>,
+    staged-deleted: list<string>,
+    unstaged-modified: list<string>,
+    unstaged-deleted: list<string>,
+    untracked: list<string>,
+  }
+
+  record log-entry {
+    id: string,
+    author: string,
+    message: string,
+    timestamp: s64,
+  }
+
+  record branch-info {
+    name: string,
+    commit-id: string,
+    is-current: bool,
+  }
+
+  init: func(root: string, default-branch: string) -> result<_, string>;
+  add: func(root: string, paths: list<string>) -> result<_, string>;
+  status: func(root: string) -> result<status-result, string>;
+  status-porcelain: func(root: string) -> result<list<string>, string>;
+  commit: func(root: string, message: string, author: string, timestamp: s64)
+    -> result<string, string>;
+  log: func(root: string, max-count: s32) -> result<list<log-entry>, string>;
+  checkout: func(root: string, target: string) -> result<_, string>;
+  checkout-b: func(root: string, branch-name: string) -> result<_, string>;
+  branch-list: func(root: string) -> result<list<branch-info>, string>;
+  branch-create: func(root: string, name: string) -> result<_, string>;
+  branch-delete: func(root: string, name: string) -> result<_, string>;
+  rm: func(root: string, paths: list<string>, cached: bool) -> result<_, string>;
+  mv: func(root: string, source: string, dest: string) -> result<_, string>;
+}
+
+interface git-network-ops {
+  clone: func(url: string, dest: string, branch: string, depth: s32) -> result<_, string>;
+  fetch: func(root: string, remote: string) -> result<_, string>;
+  push: func(root: string, remote: string, refspec: string) -> result<_, string>;
+}
+
+world bit-git {
+  import filesystem;
+  import http-client;
+  import environment;
+  export git-ops;
+  export git-network-ops;
+}

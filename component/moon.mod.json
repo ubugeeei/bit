@@ -1,0 +1,16 @@
+{
+  "name": "bit/component",
+  "version": "0.1.0",
+  "deps": {
+    "mizchi/bit": {
+      "path": ".."
+    },
+    "mizchi/zlib": "0.3.0",
+    "moonbitlang/x": "0.4.40",
+    "mizchi/x": {
+      "path": "../third_party/mizchi_x"
+    }
+  },
+  "license": "Apache-2.0",
+  "description": "WASM Component for bit-vcs git operations"
+}

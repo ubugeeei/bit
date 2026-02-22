@@ -1,0 +1,58 @@
+import {
+  "bit/component/gen/cabi" @cabi,
+  "bit/component/gen/interface/bit/git/filesystem" @wit_fs,
+  "bit/component/gen/interface/bit/git/http-client" @wit_http,
+  "mizchi/bit" @bit,
+  "mizchi/bit/lib" @bitlib,
+  "mizchi/bit/ignore" @ignore,
+}
+
+options(
+  "is-main": true,
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "exports": [
+        "cabi_realloc:cabi_realloc",
+        "wasmExportAdd:bit:git/git-ops#add",
+        "wasmExportBranchCreate:bit:git/git-ops#branch-create",
+        "wasmExportBranchDelete:bit:git/git-ops#branch-delete",
+        "wasmExportBranchList:bit:git/git-ops#branch-list",
+        "wasmExportCheckout:bit:git/git-ops#checkout",
+        "wasmExportCheckoutB:bit:git/git-ops#checkout-b",
+        "wasmExportCommit:bit:git/git-ops#commit",
+        "wasmExportInit:bit:git/git-ops#init",
+        "wasmExportLog:bit:git/git-ops#log",
+        "wasmExportMv:bit:git/git-ops#mv",
+        "wasmExportRm:bit:git/git-ops#rm",
+        "wasmExportStatus:bit:git/git-ops#status",
+        "wasmExportStatusPorcelain:bit:git/git-ops#status-porcelain",
+        "wasmExportClone:bit:git/git-network-ops#clone",
+        "wasmExportFetch:bit:git/git-network-ops#fetch",
+        "wasmExportPush:bit:git/git-network-ops#push",
+      ],
+    },
+    "wasm-gc": {
+      "export-memory-name": "memory",
+      "exports": [
+        "cabi_realloc:cabi_realloc",
+        "wasmExportAdd:bit:git/git-ops#add",
+        "wasmExportBranchCreate:bit:git/git-ops#branch-create",
+        "wasmExportBranchDelete:bit:git/git-ops#branch-delete",
+        "wasmExportBranchList:bit:git/git-ops#branch-list",
+        "wasmExportCheckout:bit:git/git-ops#checkout",
+        "wasmExportCheckoutB:bit:git/git-ops#checkout-b",
+        "wasmExportCommit:bit:git/git-ops#commit",
+        "wasmExportInit:bit:git/git-ops#init",
+        "wasmExportLog:bit:git/git-ops#log",
+        "wasmExportMv:bit:git/git-ops#mv",
+        "wasmExportRm:bit:git/git-ops#rm",
+        "wasmExportStatus:bit:git/git-ops#status",
+        "wasmExportStatusPorcelain:bit:git/git-ops#status-porcelain",
+        "wasmExportClone:bit:git/git-network-ops#clone",
+        "wasmExportFetch:bit:git/git-network-ops#fetch",
+        "wasmExportPush:bit:git/git-network-ops#push",
+      ],
+    },
+  },
+)
