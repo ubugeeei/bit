@@ -1,0 +1,21 @@
+import {
+  "mizchi/bit" @bit,
+  "moonbitlang/async/process" @process,
+  "moonbitlang/async/js_async" @js_async,
+  "moonbitlang/core/env" @env,
+  "moonbitlang/core/encoding/base64" @base64,
+  "moonbitlang/core/encoding/utf8" @utf8,
+  "moonbitlang/core/json" @json,
+  "moonbitlang/x/sys" @sys,
+}
+
+warnings = "-29"
+
+options(
+  targets: {
+    "relay_sign.mbt": ["native", "js", "wasm-gc", "wasm"],
+    "relay_sign_native.mbt": ["native"],
+    "relay_sign_js.mbt": ["js"],
+    "relay_sign_wasm.mbt": ["wasm-gc", "wasm"],
+  },
+)
