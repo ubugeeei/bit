@@ -50,6 +50,9 @@ async fn show_help() -> Unit {
     #|work with multiple working trees
     #|   worktree    Manage multiple working trees
     #|
+    #|relay
+    #|   relay        Relay-based repository sharing (serve, sync)
+    #|
     #|experimental
     #|   hub          Manage pull requests and issues
     #|   pr           Shortcut for 'hub pr' (gh-like)
@@ -425,6 +428,12 @@ async fn show_command_help(cmd : String, silent? : Bool = false) -> Bool {
       }
       true
     }
+    "relay" => {
+      if not(silent) {
+        print_relay_usage()
+      }
+      true
+    }
     "pr" => {
       if not(silent) {
         print_hub_pr_usage()
@@ -545,6 +554,7 @@ async fn run_main_for_args(args : Array[String]) -> Unit {
     return ()
   }
   @bitnative.init_native_io()
+  @bitconfig.load_and_inject()
   // Handle --version and --help early (can appear anywhere before command)
   for i in 1..<args.length() {
     match args[i] {
@@ -897,6 +907,7 @@ async fn dispatch_known_command(
     "config" => handle_config(rest)
     "subdir-clone" => handle_subdir_clone(rest)
     "hub" => handle_hub(rest)
+    "relay" => handle_relay(rest)
     "pr" => handle_hub_pr(rest)
     "issue" => handle_hub_issue(rest)
     "mcp" => handle_mcp(rest)

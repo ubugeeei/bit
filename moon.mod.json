@@ -10,7 +10,8 @@
     "mizchi/bitflow": "0.3.1",
     "mizchi/x": {
       "path": "third_party/mizchi_x"
-    }
+    },
+    "bobzhang/toml": "0.1.7"
   },
   "readme": "README.mbt.md",
   "repository": "https://github.com/mizchi/bit-vcs",

@@ -60,9 +60,10 @@ build:
     cp "$bin_path" tools/git-shim/moon
     @chmod +x tools/git-shim/moon
 
-# Install bit to ~/.local/bin
+# Install bit to ~/.moon/bin
 install:
     moon install ./src/cmd/bit
+    codesign -fs - ~/.moon/bin/bit
 
 # Uninstall bit
 uninstall:
