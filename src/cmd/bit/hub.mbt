@@ -128,11 +128,13 @@ fn print_hub_usage() -> Unit {
   println("  issue         Manage issues")
   println("  work-item     Manage unified issue/pull-request view")
   println("  note          Manage notes")
-  println("  sync          Sync hub refs with remotes")
   println("  dump          Dump raw hub records from notes")
-  println("  serve         Serve repository via relay for remote cloning")
   println("  search        Search hub entities")
   println("  help          Show this help")
+  println("")
+  println("Relay commands have moved to 'bit relay':")
+  println("  bit relay serve   Serve repository via relay")
+  println("  bit relay sync    Sync hub refs with relay remotes")
   println("")
   println("Run 'bit hub <subcommand> -h' for details.")
 }
@@ -213,6 +215,14 @@ fn print_hub_issue_usage() -> Unit {
   )
   println("  comment list <issue-id>")
   println("  link <issue-id> <pr-id>")
+  println("  claim <issue-id> [--remote <url>] [--auth-token <token>]")
+  println("  unclaim <issue-id> [--remote <url>] [--auth-token <token>]")
+  println(
+    "  claims [--stale-hours <n>] [--remote <url>] [--auth-token <token>]",
+  )
+  println(
+    "  watch [--stale-hours <n>] [--remote <url>] [--auth-token <token>]",
+  )
 }
 
 ///|
@@ -240,7 +250,7 @@ fn print_hub_note_usage() -> Unit {
 
 ///|
 fn print_hub_sync_usage() -> Unit {
-  println("Usage: bit hub sync <subcommand> [<args>]")
+  println("Usage: bit relay sync <subcommand> [<args>]")
   println("")
   println("Subcommands:")
   println(
@@ -1030,10 +1040,16 @@ async fn handle_hub(args : Array[String]) -> Unit raise Error {
     "issue" => handle_hub_issue(rest)
     "work-item" | "workitem" | "item" => handle_hub_work_item(rest)
     "note" => handle_hub_note(rest)
-    "sync" => handle_hub_sync(rest)
+    "sync" => {
+      eprint_line("note: 'bit hub sync' has moved to 'bit relay sync'")
+      handle_hub_sync(rest)
+    }
     "dump" => handle_hub_dump(rest)
     "search" => handle_hub_search(rest)
-    "serve" => handle_hub_serve(rest)
+    "serve" => {
+      eprint_line("note: 'bit hub serve' has moved to 'bit relay serve'")
+      handle_hub_serve(rest)
+    }
     _ => {
       eprint_line("bit hub: unknown subcommand '\{subcmd}'")
       print_hub_usage()
@@ -2530,6 +2546,10 @@ async fn handle_hub_issue(args : Array[String]) -> Unit raise Error {
     "reopen" => handle_hub_issue_reopen(rest)
     "comment" => handle_hub_issue_comment(rest)
     "link" => handle_hub_issue_link(rest)
+    "claim" => handle_hub_issue_claim(rest)
+    "unclaim" => handle_hub_issue_unclaim(rest)
+    "claims" => handle_hub_issue_claims(rest)
+    "watch" => handle_hub_issue_watch(rest)
     "help" | "-h" | "--help" => print_hub_issue_usage()
     _ => {
       eprint_line("bit hub issue: unknown subcommand '\{subcmd}'")
@@ -3383,6 +3403,305 @@ async fn handle_hub_issue_link(args : Array[String]) -> Unit raise Error {
   let hub = init_hub_store(objects, refs)
   hub.link_pr_to_issue(objects, refs, clock, issue_id, pr_id)
   print_line("Linked PR #\{pr_id} to issue #\{issue_id}")
+}
+
+///|
+async fn handle_hub_issue_claim(args : Array[String]) -> Unit raise Error {
+  let mut issue_id : String? = None
+  let mut remote_url : String? = None
+  let mut auth_token : String? = None
+  let mut i = 0
+  while i < args.length() {
+    let arg = args[i]
+    match arg {
+      "--remote" if i + 1 < args.length() => {
+        remote_url = Some(args[i + 1])
+        i += 2
+        continue
+      }
+      "--auth-token" if i + 1 < args.length() => {
+        auth_token = Some(args[i + 1])
+        i += 2
+        continue
+      }
+      _ if arg.has_prefix("-") => {
+        eprint_line("bit hub issue claim: unknown option '\{arg}'")
+        print_hub_issue_usage()
+        @sys.exit(1)
+      }
+      _ => {
+        issue_id = Some(arg)
+        i += 1
+        continue
+      }
+    }
+  }
+  guard issue_id is Some(id) else {
+    eprint_line("bit hub issue claim: missing <issue-id>")
+    print_hub_issue_usage()
+    @sys.exit(1)
+  }
+  let url = resolve_claim_remote_url(remote_url)
+  let sender = @hub_native.relay_sender_name()
+  let timestamp = get_current_timestamp()
+  let claim = @hub.ClaimMessage::new(id, @hub.ClaimAction::Claim, sender, timestamp)
+  let accepted = @hub_native.relay_publish_claim(
+    url,
+    claim,
+    auth_token~,
+  )
+  if accepted {
+    print_line("Published claim for \{id}")
+  } else {
+    print_line("Claim for \{id} already published (duplicate)")
+  }
+}
+
+///|
+async fn handle_hub_issue_unclaim(args : Array[String]) -> Unit raise Error {
+  let mut issue_id : String? = None
+  let mut remote_url : String? = None
+  let mut auth_token : String? = None
+  let mut i = 0
+  while i < args.length() {
+    let arg = args[i]
+    match arg {
+      "--remote" if i + 1 < args.length() => {
+        remote_url = Some(args[i + 1])
+        i += 2
+        continue
+      }
+      "--auth-token" if i + 1 < args.length() => {
+        auth_token = Some(args[i + 1])
+        i += 2
+        continue
+      }
+      _ if arg.has_prefix("-") => {
+        eprint_line("bit hub issue unclaim: unknown option '\{arg}'")
+        print_hub_issue_usage()
+        @sys.exit(1)
+      }
+      _ => {
+        issue_id = Some(arg)
+        i += 1
+        continue
+      }
+    }
+  }
+  guard issue_id is Some(id) else {
+    eprint_line("bit hub issue unclaim: missing <issue-id>")
+    print_hub_issue_usage()
+    @sys.exit(1)
+  }
+  let url = resolve_claim_remote_url(remote_url)
+  let sender = @hub_native.relay_sender_name()
+  let timestamp = get_current_timestamp()
+  let claim = @hub.ClaimMessage::new(id, @hub.ClaimAction::Unclaim, sender, timestamp)
+  let accepted = @hub_native.relay_publish_claim(
+    url,
+    claim,
+    auth_token~,
+  )
+  if accepted {
+    print_line("Published unclaim for \{id}")
+  } else {
+    print_line("Unclaim for \{id} already published (duplicate)")
+  }
+}
+
+///|
+async fn handle_hub_issue_claims(args : Array[String]) -> Unit raise Error {
+  let mut remote_url : String? = None
+  let mut auth_token : String? = None
+  let mut stale_hours : Int = 24
+  let mut i = 0
+  while i < args.length() {
+    let arg = args[i]
+    match arg {
+      "--remote" if i + 1 < args.length() => {
+        remote_url = Some(args[i + 1])
+        i += 2
+        continue
+      }
+      "--auth-token" if i + 1 < args.length() => {
+        auth_token = Some(args[i + 1])
+        i += 2
+        continue
+      }
+      "--stale-hours" if i + 1 < args.length() => {
+        stale_hours = @strconv.parse_int(args[i + 1]) catch { _ => 24 }
+        i += 2
+        continue
+      }
+      _ if arg.has_prefix("-") => {
+        eprint_line("bit hub issue claims: unknown option '\{arg}'")
+        print_hub_issue_usage()
+        @sys.exit(1)
+      }
+      _ => {
+        i += 1
+        continue
+      }
+    }
+  }
+  let url = resolve_claim_remote_url(remote_url)
+  let all_claims = @hub_native.relay_poll_claims(url, auth_token~)
+  let active = @hub.resolve_active_claims(all_claims)
+  if active.length() == 0 {
+    print_line("No active claims")
+    return ()
+  }
+  let now = get_current_timestamp()
+  print_line("ISSUE\tCLAIMER\tCLAIMED_AT\tSTATUS")
+  for claim in active {
+    let ts = claim.timestamp()
+    let status = if claim.is_stale(now, threshold_hours=stale_hours) {
+      let hours_ago = (now - ts) / 3600L
+      "stale (\{hours_ago}h ago)"
+    } else {
+      "active"
+    }
+    print_line("\{claim.issue_id()}\t\{claim.claimer()}\t\{ts}\t\{status}")
+  }
+}
+
+///|
+fn resolve_claim_remote_url(
+  explicit : String?,
+) -> String raise @bitcore.GitError {
+  match explicit {
+    Some(url) => url
+    None => {
+      let root = get_work_root()
+      let git_dir = root + "/.git"
+      let fs = OsFs::new()
+      match get_effective_remote_url(fs, git_dir) {
+        Some(url) => url
+        None =>
+          raise @bitcore.GitError::InvalidObject(
+            "No remote configured. Use --remote <url>",
+          )
+      }
+    }
+  }
+}
+
+///|
+fn format_claim_timestamp(ts : Int64) -> String {
+  let secs = ts % 60L
+  let mins = (ts / 60L) % 60L
+  let hours = (ts / 3600L) % 24L
+  let s = secs.to_int()
+  let m = mins.to_int()
+  let h = hours.to_int()
+  let s_str = if s < 10 { "0\{s}" } else { "\{s}" }
+  let m_str = if m < 10 { "0\{m}" } else { "\{m}" }
+  let h_str = if h < 10 { "0\{h}" } else { "\{h}" }
+  "\{h_str}:\{m_str}:\{s_str}"
+}
+
+///|
+async fn handle_hub_issue_watch(args : Array[String]) -> Unit raise Error {
+  let mut remote_url : String? = None
+  let mut auth_token : String? = None
+  let mut stale_hours : Int = 24
+  let mut i = 0
+  while i < args.length() {
+    let arg = args[i]
+    match arg {
+      "--remote" if i + 1 < args.length() => {
+        remote_url = Some(args[i + 1])
+        i += 2
+        continue
+      }
+      "--auth-token" if i + 1 < args.length() => {
+        auth_token = Some(args[i + 1])
+        i += 2
+        continue
+      }
+      "--stale-hours" if i + 1 < args.length() => {
+        stale_hours = @strconv.parse_int(args[i + 1]) catch { _ => 24 }
+        i += 2
+        continue
+      }
+      _ if arg.has_prefix("-") => {
+        eprint_line("bit hub issue watch: unknown option '\{arg}'")
+        print_hub_issue_usage()
+        @sys.exit(1)
+      }
+      _ => {
+        i += 1
+        continue
+      }
+    }
+  }
+  let url = resolve_claim_remote_url(remote_url)
+  let now = get_current_timestamp()
+  // Initial poll: fetch all existing claims
+  let initial_result = @hub_native.relay_poll_claims_after(
+    url,
+    0,
+    1000,
+    auth_token~,
+  )
+  let mut cursor = initial_result.0
+  let active = @hub.resolve_active_claims(initial_result.1)
+  print_line("Watching claims...")
+  for claim in active {
+    let ts = claim.timestamp()
+    let status = if claim.is_stale(now, threshold_hours=stale_hours) {
+      let hours_ago = (now - ts) / 3600L
+      "stale (\{hours_ago}h ago)"
+    } else {
+      "active"
+    }
+    print_line(
+      "[initial] \{claim.issue_id()}\t\{claim.claimer()}\t\{status}",
+    )
+  }
+  print_line("---")
+  // Try WebSocket first, fall back to poll
+  let ws_ok = try {
+    print_line("Connecting via WebSocket...")
+    @hub_native.relay_watch_claims_ws(
+      url,
+      fn(claim) {
+        let action_str = claim.action().to_string()
+        let ts_str = format_claim_timestamp(claim.timestamp())
+        println(
+          "[new] \{action_str}\t\{claim.issue_id()}\t\{claim.claimer()}\t\{ts_str}",
+        )
+      },
+      auth_token~,
+    )
+    true
+  } catch {
+    err => {
+      eprint_line("WebSocket failed: \{err.to_string()}, falling back to poll")
+      false
+    }
+  }
+  if ws_ok {
+    return ()
+  }
+  // Poll fallback
+  print_line("Polling every 5s...")
+  while true {
+    @async.sleep(5000)
+    let (next_cursor, new_claims) = try {
+      @hub_native.relay_poll_claims_after(url, cursor, 100, auth_token~)
+    } catch {
+      _ => continue
+    }
+    cursor = next_cursor
+    for claim in new_claims {
+      let action_str = claim.action().to_string()
+      let ts_str = format_claim_timestamp(claim.timestamp())
+      print_line(
+        "[new] \{action_str}\t\{claim.issue_id()}\t\{claim.claimer()}\t\{ts_str}",
+      )
+    }
+  }
 }
 
 ///|

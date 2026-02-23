@@ -15,12 +15,14 @@ import {
   "moonbitlang/core/json" @json,
   "moonbitlang/x/sys" @sys,
   "moonbitlang/core/strconv" @strconv,
+  "mizchi/x/websocket" @xws,
 }
 
 warnings = "-29"
 
 options(
   targets: {
+    "claim_native.mbt": [ "native" ],
     "sync_native.mbt": [ "native" ],
     "sync_native_bench_wbtest.mbt": [ "native" ],
     "sync_native_wbtest.mbt": [ "native" ],
