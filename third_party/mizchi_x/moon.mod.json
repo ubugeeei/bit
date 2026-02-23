@@ -6,5 +6,8 @@
     "moonbitlang/x": "0.4.40"
   },
   "source": "src",
-  "preferred-target": "native"
+  "preferred-target": "native",
+  "license": "Apache-2.0",
+  "repository": "https://github.com/bit-vcs/bit",
+  "description": "HTTP and WebSocket utilities for MoonBit"
 }
