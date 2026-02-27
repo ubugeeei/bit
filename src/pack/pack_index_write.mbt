@@ -38,68 +38,81 @@ pub fn build_pack_index_from_objects(
   if needs_parse {
     return build_pack_index(pack)
   }
-  let entries : Array[PackIndexEntry] = []
-  for obj in objects {
-    entries.push({ id: obj.id, offset: obj.offset, crc: obj.crc32 })
+  if pack.length() < 20 {
+    raise @bit.GitError::PackfileError("Packfile too short")
   }
-  entries.sort_by((a, b) => compare_object_id(a.id, b.id))
-  let counts : Array[Int] = Array::make(256, 0)
-  for entry in entries {
-    let first = entry.id.bytes[0].to_int()
-    counts[first] = counts[first] + 1
-  }
-  let out : Array[Byte] = []
-  // Index header: magic + version
-  out.push(b'\xff')
-  out.push(b't')
-  out.push(b'O')
-  out.push(b'c')
-  push_u32_be_from_int(out, 2)
+
+  // Sort objects by id in place (callers don't depend on order after this)
+  objects.sort_by(fn(a, b) { compare_object_id(a.id, b.id) })
+
+  let n = objects.length()
+  // idx v2: header(8) + fanout(1024) + names(N*20) + crc(N*4) + offsets(N*4)
+  //       + pack_checksum(20) + idx_checksum(20)
+  let total_size = 1072 + n * 28
+  let content_size = total_size - 20
+  let out : FixedArray[Byte] = FixedArray::make(total_size, b'\x00')
+  let mut pos = 0
+
+  // Header: magic + version
+  out[0] = b'\xff'
+  out[1] = b't'
+  out[2] = b'O'
+  out[3] = b'c'
+  pos = 4
+  set_u32_be(out, pos, 2)
+  pos += 4
 
   // Fanout table
+  let counts : FixedArray[Int] = FixedArray::make(256, 0)
+  for obj in objects {
+    let first = obj.id.bytes[0].to_int()
+    counts[first] = counts[first] + 1
+  }
   let mut sum = 0
   for i in 0..<256 {
     sum = sum + counts[i]
-    push_u32_be_from_int(out, sum)
+    set_u32_be(out, pos, sum)
+    pos += 4
   }
 
   // Object name table
-  for entry in entries {
-    for b in entry.id.bytes {
-      out.push(b)
+  for obj in objects {
+    for i in 0..<20 {
+      out[pos] = obj.id.bytes[i]
+      pos += 1
     }
   }
 
   // CRC32 table
-  for entry in entries {
-    push_u32_be_from_uint(out, entry.crc)
+  for obj in objects {
+    set_u32_be_uint(out, pos, obj.crc32)
+    pos += 4
   }
 
-  // Offsets table (no large offsets due to Int range)
-  for entry in entries {
-    if entry.offset < 0 {
+  // Offsets table
+  for obj in objects {
+    if obj.offset < 0 {
       raise @bit.GitError::PackfileError("Negative pack offset")
     }
-    push_u32_be_from_int(out, entry.offset)
+    set_u32_be(out, pos, obj.offset)
+    pos += 4
   }
 
-  // Packfile checksum (trailer)
-  if pack.length() < 20 {
-    raise @bit.GitError::PackfileError("Packfile too short")
-  }
+  // Pack checksum (trailer)
   let trailer_offset = pack.length() - 20
-  let pack_checksum = read_trailer_id(pack, trailer_offset)
-  for b in pack_checksum.bytes {
-    out.push(b)
+  for i in 0..<20 {
+    out[pos] = pack[trailer_offset + i]
+    pos += 1
   }
 
-  // Index checksum
-  let before_checksum = bytes_from_array(out)
-  let index_checksum = @bit.sha1(before_checksum)
-  for b in index_checksum.bytes {
-    out.push(b)
+  // Index checksum: SHA-1 of everything before this point
+  let tmp_bytes = Bytes::from_array(out)
+  let index_checksum = @bit.sha1_prefix(tmp_bytes, content_size)
+  for i in 0..<20 {
+    out[pos] = index_checksum.bytes[i]
+    pos += 1
   }
-  bytes_from_array(out)
+  Bytes::from_array(out)
 }
 
 ///|
@@ -396,6 +409,23 @@ fn push_u32_be_from_int(out : Array[Byte], value : Int) -> Unit {
   out.push(((value >> 16) & 0xff).to_byte())
   out.push(((value >> 8) & 0xff).to_byte())
   out.push((value & 0xff).to_byte())
+}
+
+///|
+fn set_u32_be(out : FixedArray[Byte], pos : Int, value : Int) -> Unit {
+  out[pos] = ((value >> 24) & 0xff).to_byte()
+  out[pos + 1] = ((value >> 16) & 0xff).to_byte()
+  out[pos + 2] = ((value >> 8) & 0xff).to_byte()
+  out[pos + 3] = (value & 0xff).to_byte()
+}
+
+///|
+fn set_u32_be_uint(out : FixedArray[Byte], pos : Int, value : UInt) -> Unit {
+  let mask = Int::reinterpret_as_uint(0xff)
+  out[pos] = UInt::reinterpret_as_int((value >> 24) & mask).to_byte()
+  out[pos + 1] = UInt::reinterpret_as_int((value >> 16) & mask).to_byte()
+  out[pos + 2] = UInt::reinterpret_as_int((value >> 8) & mask).to_byte()
+  out[pos + 3] = UInt::reinterpret_as_int(value & mask).to_byte()
 }
 
 ///|
