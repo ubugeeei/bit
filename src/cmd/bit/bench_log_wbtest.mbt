@@ -1,5 +1,6 @@
 ///| E2E benchmarks for log command
 ///  Measures commit traversal cost with varying commit counts
+///  NOTE: bit log defaults to max_count=10, so -n must be explicit for scaling tests
 
 ///|
 /// Run with:
@@ -134,14 +135,7 @@ fn bench_log_run(repo_root : String, args : Array[String]) -> Int {
 }
 
 ///|
-test "bench log oneline 50 commits" (b : @bench.T) {
-  bench_log_ensure_repo(bench_log_small, 10, 50)
-  bench_log_reset_env()
-  b.bench(fn() { b.keep(bench_log_run(bench_log_small, ["log", "--oneline"])) })
-}
-
-///|
-test "bench log oneline -n 10" (b : @bench.T) {
+test "bench log oneline -n 10 (shallow)" (b : @bench.T) {
   bench_log_ensure_repo(bench_log_large, 10, 1000)
   bench_log_reset_env()
   b.bench(fn() {
@@ -150,29 +144,44 @@ test "bench log oneline -n 10" (b : @bench.T) {
 }
 
 ///|
-test "bench log oneline 200 commits" (b : @bench.T) {
+test "bench log oneline -n 50" (b : @bench.T) {
+  bench_log_ensure_repo(bench_log_small, 10, 50)
+  bench_log_reset_env()
+  b.bench(fn() {
+    b.keep(bench_log_run(bench_log_small, ["log", "--oneline", "-n", "50"]))
+  })
+}
+
+///|
+test "bench log oneline -n 200" (b : @bench.T) {
   bench_log_ensure_repo(bench_log_medium, 10, 200)
   bench_log_reset_env()
-  b.bench(fn() { b.keep(bench_log_run(bench_log_medium, ["log", "--oneline"])) })
+  b.bench(fn() {
+    b.keep(bench_log_run(bench_log_medium, ["log", "--oneline", "-n", "200"]))
+  })
 }
 
 ///|
-test "bench log oneline 1000 commits" (b : @bench.T) {
+test "bench log oneline -n 1000" (b : @bench.T) {
   bench_log_ensure_repo(bench_log_large, 10, 1000)
   bench_log_reset_env()
-  b.bench(fn() { b.keep(bench_log_run(bench_log_large, ["log", "--oneline"])) })
+  b.bench(fn() {
+    b.keep(bench_log_run(bench_log_large, ["log", "--oneline", "-n", "1000"]))
+  })
 }
 
 ///|
-test "bench log full 50 commits" (b : @bench.T) {
+test "bench log full -n 50" (b : @bench.T) {
   bench_log_ensure_repo(bench_log_small, 10, 50)
   bench_log_reset_env()
-  b.bench(fn() { b.keep(bench_log_run(bench_log_small, ["log"])) })
+  b.bench(fn() { b.keep(bench_log_run(bench_log_small, ["log", "-n", "50"])) })
 }
 
 ///|
-test "bench log stat 50 commits" (b : @bench.T) {
+test "bench log stat -n 50" (b : @bench.T) {
   bench_log_ensure_repo(bench_log_small, 10, 50)
   bench_log_reset_env()
-  b.bench(fn() { b.keep(bench_log_run(bench_log_small, ["log", "--stat"])) })
+  b.bench(fn() {
+    b.keep(bench_log_run(bench_log_small, ["log", "--stat", "-n", "50"]))
+  })
 }
