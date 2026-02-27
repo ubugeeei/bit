@@ -6,7 +6,11 @@
 
 ## P0: Git compatibility / 計測
 
-- [ ] multi-pack-index の崩れを修正する
+- [x] multi-pack-index の崩れを修正する（2026-02-27）
+  - [x] t5317 filter-objects: `--filter` unsupported フラグ除去（33/33）
+  - [x] t5310 pack-bitmaps: --local/--honor-pack-keep, trace2, bitmap 破損検知（233/233）
+  - [x] t5332 multi-pack-reuse: trace2 data イベント, OFS_DELTA クロスパック判定（14/14）
+  - [x] t5316 delta-depth: index-pack --fix-thin 許可, trace2 region イベント（5/5）
   - bitmap/rev 生成検証
   - `rev-list --test-bitmap`
   - incremental layer/relink
