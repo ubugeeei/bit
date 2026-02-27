@@ -428,6 +428,9 @@ bench-diff:
 bench-ops:
     moon bench --target native -p mizchi/bit/lib -f bench_ops_test.mbt
 
+bench-log:
+    moon bench --target native -p mizchi/bit/cmd/bit -f bench_log_wbtest.mbt
+
 # Save benchmark results with a name
 bench-save name:
     moon bench --target native 2>&1 | bash tools/bench-save.sh {{name}}
