@@ -10,7 +10,6 @@ priv struct PackObjectsConfig {
   progress : Bool
   path_walk : Bool
   sparse_mode : Bool?
-  index_version : Int
   filter : @protocol.FilterSpec
   object_format : String?
   stdin_packs : Bool
@@ -59,7 +58,6 @@ fn parse_pack_objects_args(args : Array[String]) -> PackObjectsParse {
   let mut progress = false
   let mut path_walk = false
   let mut sparse_mode : Bool? = None
-  let index_version = 2
   let mut filter = @protocol.FilterSpec::NoFilter
   let mut object_format : String? = None
   let mut stdin_packs = false
@@ -342,7 +340,6 @@ fn parse_pack_objects_args(args : Array[String]) -> PackObjectsParse {
     progress,
     path_walk,
     sparse_mode,
-    index_version,
     filter,
     object_format,
     stdin_packs,
