@@ -389,27 +389,46 @@ fn receive_split_updates_by_proc_receive(
 
 ///|
 /// Check if a refname matches any of the proc-receive patterns.
-/// Patterns support prefix match with : separator and ! negation.
+/// Git format: [modifiers:]ref_prefix
+/// Modifiers before ':': a(add), d(delete), m(modify), !(negate)
+/// Without ':', all types match (add+delete+modify).
+/// Matching is always prefix with '/' boundary (like git's skip_prefix).
 fn receive_ref_matches_proc_patterns(
   refname : String,
   patterns : Array[String],
 ) -> Bool {
   for pattern in patterns {
-    let (negated, pat) = if pattern.has_prefix("!") {
-      (true, String::unsafe_substring(pattern, start=1, end=pattern.length()))
-    } else {
-      (false, pattern)
+    // Parse modifiers and ref prefix
+    let mut negated = false
+    let ref_prefix = match pattern.find(":") {
+      Some(colon_idx) => {
+        // Parse modifier chars before ':'
+        for i in 0..<colon_idx {
+          let c = pattern[i]
+          if c == '!' {
+            negated = true
+          }
+          // 'a', 'd', 'm' modifiers ignored for now (match all types)
+        }
+        String::unsafe_substring(
+          pattern,
+          start=colon_idx + 1,
+          end=pattern.length(),
+        )
+      }
+      None => pattern
     }
-    let (is_prefix, prefix) = if pat.has_prefix(":") {
-      (true, String::unsafe_substring(pat, start=1, end=pat.length()))
-    } else {
-      (false, pat)
+    // Strip trailing slashes from prefix (like git)
+    let mut prefix = ref_prefix
+    while prefix.has_suffix("/") {
+      prefix = String::unsafe_substring(
+        prefix,
+        start=0,
+        end=prefix.length() - 1,
+      )
     }
-    let matched = if is_prefix {
-      refname.has_prefix(prefix)
-    } else {
-      refname == prefix
-    }
+    // Prefix match with '/' boundary: refname == prefix || refname starts with prefix + "/"
+    let matched = refname == prefix || refname.has_prefix(prefix + "/")
     if matched {
       return not(negated)
     }
@@ -431,6 +450,19 @@ async fn receive_run_hook(
   let hook_path = git_dir + "/hooks/" + hook_name
   if not(fs.is_file(hook_path)) {
     return true
+  }
+  // Compute hook path relative to root for execution with cwd=root.
+  // hook_path is relative to original CWD, but we exec with cwd=root.
+  let exec_hook_path = if hook_path.has_prefix("/") {
+    hook_path
+  } else if hook_path.has_prefix(root + "/") {
+    String::unsafe_substring(
+      hook_path,
+      start=root.length() + 1,
+      end=hook_path.length(),
+    )
+  } else {
+    hook_path
   }
   // Build stdin data: "<old-oid> <new-oid> <refname>\n" for each update
   let stdin_buf = StringBuilder::new()
@@ -457,8 +489,8 @@ async fn receive_run_hook(
       env["GIT_PUSH_OPTION_\{i}"] = opt
     }
   }
-  let code = @process.run(
-    hook_path,
+  let (code, _stdout_data, stderr_data) = @process.collect_output(
+    exec_hook_path,
     [],
     extra_env=env,
     inherit_env=true,
@@ -466,6 +498,15 @@ async fn receive_run_hook(
     cwd=root,
   ) catch {
     _ => return true
+  }
+  // Write hook stdout+stderr to our stderr (hooks use exec >&2)
+  let stderr_bytes = stderr_data.binary()
+  if stderr_bytes.length() > 0 {
+    @stdio.stderr.write(stderr_data)
+  }
+  let stdout_bytes = _stdout_data.binary()
+  if stdout_bytes.length() > 0 {
+    @stdio.stderr.write(_stdout_data)
   }
   code == 0
 }
@@ -493,6 +534,18 @@ async fn receive_run_proc_receive_hook(
           fall_through: false,
         } : @bitlib.ReceivePackProcResult)
     })
+  }
+  // Compute hook path relative to root for execution with cwd=root.
+  let exec_hook_path = if hook_path.has_prefix("/") {
+    hook_path
+  } else if hook_path.has_prefix(root + "/") {
+    String::unsafe_substring(
+      hook_path,
+      start=root.length() + 1,
+      end=hook_path.length(),
+    )
+  } else {
+    hook_path
   }
   // Build proc-receive protocol input:
   // 1. version negotiation: "version=1\n" + flush
@@ -550,13 +603,12 @@ async fn receive_run_proc_receive_hook(
       env["GIT_PUSH_OPTION_\{i}"] = opt
     }
   }
-  let (code, stdout_data) = @process.collect_stdout(
-    hook_path,
+  let (code, stdout_data, stderr_data) = @process.collect_output(
+    exec_hook_path,
     [],
     extra_env=env,
     inherit_env=true,
     stdin=stdin_input,
-    stderr=@stdio.stderr,
     cwd=root,
   ) catch {
     _ =>
@@ -572,6 +624,11 @@ async fn receive_run_proc_receive_hook(
             fall_through: false,
           } : @bitlib.ReceivePackProcResult)
       })
+  }
+  // Write proc-receive hook stderr to our stderr (for hook diagnostics)
+  let stderr_bytes = stderr_data.binary()
+  if stderr_bytes.length() > 0 {
+    @stdio.stderr.write(stderr_data)
   }
   if code != 0 {
     return updates.map(fn(u) {
