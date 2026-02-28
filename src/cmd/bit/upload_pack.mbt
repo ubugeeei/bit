@@ -78,7 +78,12 @@ async fn handle_upload_pack(args : Array[String]) -> Unit raise Error {
       @sys.exit(1)
     }
     if advertise {
-      let out = @bitlib.build_upload_pack_advertisement(fs, root)
+      let proto = @bitlib.get_protocol_version()
+      let out = @bitlib.build_upload_pack_advertisement(
+        fs,
+        root,
+        protocol_version=proto,
+      )
       @stdio.stdout.write(out)
     } else {
       let input = read_all_stdin()

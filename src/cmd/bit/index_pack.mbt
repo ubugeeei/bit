@@ -371,7 +371,13 @@ fn check_pack_strict_and_fsck(
   }
   let pack_ids : Map[String, Bool] = {}
   for obj in objects {
-    pack_ids[obj.id.to_hex()] = true
+    let hex = obj.id.to_hex()
+    if strict && pack_ids.contains(hex) {
+      raise @bitcore.GitError::InvalidObject(
+        "error: duplicate " + obj.obj_type.to_string() + " " + hex,
+      )
+    }
+    pack_ids[hex] = true
   }
   let db = match git_dir {
     Some(dir) =>

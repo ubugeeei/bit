@@ -26,12 +26,18 @@ pub fn build_receive_pack_advertisement(
   fs : &@bit.RepoFileSystem,
   root : String,
   agent? : String = "git/moonbit",
+  protocol_version? : Int = 0,
 ) -> Bytes raise @bit.GitError {
   let git_dir = join_path(root, ".git")
   let refs = show_ref(fs, git_dir)
   refs.sort_by((a, b) => String::compare(a.0, b.0))
   let caps = receive_default_caps(agent)
   let out : Array[Byte] = []
+  // Protocol v1: output version line before refs
+  // (receive-pack has no v2, so v2 falls back to v0)
+  if protocol_version == 1 {
+    receive_push_bytes(out, @protocol.pktline_encode("version 1\n"))
+  }
   if refs.length() == 0 {
     let zero = @bit.ObjectId::zero().to_hex()
     let line = "\{zero} capabilities^{}\u0000\{caps}\n"

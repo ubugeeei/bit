@@ -12,7 +12,7 @@ index f9ffb01e50..121f10564f 100644
 +force_transport="${SHIM_FORCE_TRANSPORT_INTERCEPT:-${GIT_SHIM_FORCE_TRANSPORT_INTERCEPT:-}}"
 +case " $shim_cmds " in
 +*" receive-pack "*)
-+	if test "$force_transport" = "1"
++	if test "$force_transport" = "1" || test "${SHIM_STRICT:-}" = "1"
 +	then
 +		proc_receive_report_status_v1_expect=test_expect_failure
 +	fi

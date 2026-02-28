@@ -525,11 +525,17 @@ pub fn parse_config_overrides() -> Map[String, String] {
 
 ///|
 pub fn get_protocol_version() -> Int {
-  // Check GIT_PROTOCOL environment variable for version=2
   let bit_protocol = @bitio.env_get("GIT_PROTOCOL")
   match bit_protocol {
-    Some(val) => if val.contains("version=2") { 2 } else { 1 }
-    None => 1
+    Some(val) =>
+      if val.contains("version=2") {
+        2
+      } else if val.contains("version=1") {
+        1
+      } else {
+        0
+      }
+    None => 0
   }
 }
 

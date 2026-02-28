@@ -178,24 +178,53 @@ pub fn build_upload_pack_advertisement(
   fs : &@bit.RepoFileSystem,
   root : String,
   agent? : String = "git/moonbit",
+  protocol_version? : Int = 0,
 ) -> Bytes raise @bit.GitError {
   let git_dir = join_path(root, ".git")
+  let out : Array[Byte] = []
+  // Protocol v2: output capabilities instead of refs
+  if protocol_version == 2 {
+    upload_push_bytes(out, @protocol.pktline_encode("version 2\n"))
+    upload_push_bytes(out, @protocol.pktline_encode("agent=\{agent}\n"))
+    upload_push_bytes(out, @protocol.pktline_encode("ls-refs=unborn\n"))
+    upload_push_bytes(
+      out,
+      @protocol.pktline_encode("fetch=shallow wait-for-done\n"),
+    )
+    upload_push_bytes(out, @protocol.pktline_encode("server-option\n"))
+    upload_push_bytes(out, @protocol.pktline_encode("object-format=sha1\n"))
+    upload_push_bytes(out, @protocol.pktline_flush())
+    return Bytes::from_array(FixedArray::makei(out.length(), i => out[i]))
+  }
   let refs = show_ref(fs, git_dir)
   refs.sort_by((a, b) => String::compare(a.0, b.0))
+  // Resolve HEAD and prepend it to refs list
+  let head_id = resolve_ref(fs, git_dir, "HEAD")
+  let all_refs : Array[(String, @bit.ObjectId)] = []
+  match head_id {
+    Some(id) => all_refs.push(("HEAD", id))
+    None => ()
+  }
+  for item in refs {
+    all_refs.push(item)
+  }
   let caps = upload_default_caps(agent)
-  let out : Array[Byte] = []
-  if refs.length() == 0 {
+  // Protocol v1: output version line before refs
+  if protocol_version == 1 {
+    upload_push_bytes(out, @protocol.pktline_encode("version 1\n"))
+  }
+  if all_refs.length() == 0 {
     let zero = @bit.ObjectId::zero().to_hex()
     let line = "\{zero} capabilities^{}\u0000\{caps}\n"
     upload_push_bytes(out, @protocol.pktline_encode(line))
     upload_push_bytes(out, @protocol.pktline_flush())
     return Bytes::from_array(FixedArray::makei(out.length(), i => out[i]))
   }
-  let (first_name, first_id) = refs[0]
+  let (first_name, first_id) = all_refs[0]
   let first_line = "\{first_id.to_hex()} \{first_name}\u0000\{caps}\n"
   upload_push_bytes(out, @protocol.pktline_encode(first_line))
-  for i in 1..<refs.length() {
-    let (name, id) = refs[i]
+  for i in 1..<all_refs.length() {
+    let (name, id) = all_refs[i]
     let line = "\{id.to_hex()} \{name}\n"
     upload_push_bytes(out, @protocol.pktline_encode(line))
   }
