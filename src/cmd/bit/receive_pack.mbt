@@ -30,6 +30,9 @@ async fn handle_receive_pack(args : Array[String]) -> Unit {
   let fs = OsFs::new()
   let git_dir = if root.has_suffix(".git") && !root.has_suffix("/.git") {
     root
+  } else if fs.is_file(root + "/HEAD") && not(fs.is_dir(root + "/.git")) {
+    // Bare repository without .git suffix
+    root
   } else {
     root + "/.git"
   }
@@ -47,6 +50,7 @@ async fn handle_receive_pack(args : Array[String]) -> Unit {
       root,
       protocol_version=proto,
       extra_haves=haves,
+      git_dir_override=git_dir,
     )
     @stdio.stdout.write(out)
   }
@@ -60,6 +64,7 @@ async fn handle_receive_pack(args : Array[String]) -> Unit {
       root,
       req,
       skip_connectivity_check~,
+      git_dir_override=git_dir,
     )
     // Write connectivity check error to stderr
     match result.connectivity_error_oid {

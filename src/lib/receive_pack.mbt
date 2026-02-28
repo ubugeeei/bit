@@ -30,8 +30,13 @@ pub fn build_receive_pack_advertisement(
   agent? : String = "git/moonbit",
   protocol_version? : Int = 0,
   extra_haves? : Array[@bit.ObjectId] = [],
+  git_dir_override? : String = "",
 ) -> Bytes raise @bit.GitError {
-  let git_dir = join_path(root, ".git")
+  let git_dir = if git_dir_override.length() > 0 {
+    git_dir_override
+  } else {
+    join_path(root, ".git")
+  }
   let refs = show_ref(fs, git_dir)
   refs.sort_by((a, b) => String::compare(a.0, b.0))
   let caps = receive_default_caps(agent)
@@ -136,8 +141,13 @@ pub fn apply_receive_pack(
   root : String,
   req : ReceivePackRequest,
   skip_connectivity_check? : Bool = false,
+  git_dir_override? : String = "",
 ) -> ReceivePackResult raise @bit.GitError {
-  let git_dir = join_path(root, ".git")
+  let git_dir = if git_dir_override.length() > 0 {
+    git_dir_override
+  } else {
+    join_path(root, ".git")
+  }
   let mut pack_objects : Array[@bit.PackObject] = []
   if req.pack.length() > 0 {
     pack_objects = @pack.parse_packfile(req.pack)
@@ -212,9 +222,17 @@ pub fn receive_pack(
   root : String,
   data : Bytes,
   skip_connectivity_check? : Bool = false,
+  git_dir_override? : String = "",
 ) -> Bytes raise @bit.GitError {
   let req = parse_receive_pack_request(data)
-  let result = apply_receive_pack(fs, rfs, root, req, skip_connectivity_check~)
+  let result = apply_receive_pack(
+    fs,
+    rfs,
+    root,
+    req,
+    skip_connectivity_check~,
+    git_dir_override~,
+  )
   receive_build_status_response(result)
 }
 
