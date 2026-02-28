@@ -207,6 +207,8 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
   let mut until_ts = 9223372036854775807L
   let mut no_walk = false
   let mut walk_reflogs = false
+  let mut reverse = false
+  let mut first_parent = false
   let mut format : String? = None
   let revs : Array[String] = []
   let range_excludes : Array[String] = []
@@ -276,6 +278,8 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         let val = (try! arg[8:]).to_string()
         until_ts = @strconv.parse_int64(val) catch { _ => 9223372036854775807L }
       }
+      "--reverse" => reverse = true
+      "--first-parent" => first_parent = true
       _ if arg.has_prefix("-") => warn_unimplemented_arg("log", arg)
       _ => {
         // Detect A..B range (but not A...B)
@@ -390,7 +394,8 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     range_excludes.length() > 0
   if graph {
     log_with_graph(
-      rfs, git_dir, max_count, oneline, all_refs, decorate, since_ts, until_ts,
+      rfs, git_dir, max_count, oneline, all_refs, decorate, since_ts, until_ts, revs,
+      range_excludes, first_parent,
     )
   } else if need_walk {
     // Build start_ids from revs
@@ -480,7 +485,11 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
       since_ts,
       until_ts,
       show_stat || show_patch,
+      first_parent~,
     )
+    if reverse {
+      entries.rev_in_place()
+    }
     if oneline {
       for entry in entries {
         let short = (try! entry.id.to_hex()[:7]).to_string()
@@ -528,6 +537,9 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
       since=since_ts,
       until=until_ts,
     )
+    if reverse {
+      lines.rev_in_place()
+    }
     for line in lines {
       print_line(line)
     }
@@ -541,6 +553,9 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
       until=until_ts,
       include_parent_tree=show_stat || show_patch,
     )
+    if reverse {
+      entries.rev_in_place()
+    }
     for entry in entries {
       print_line("commit " + entry.id.to_hex())
       print_line("Author: " + entry.author)
@@ -606,6 +621,7 @@ fn log_walk_commits(
   since_ts : Int64,
   until_ts : Int64,
   include_parent_tree : Bool,
+  first_parent? : Bool = false,
 ) -> Array[LogWalkEntry] raise Error {
   let db = @bitlib.ObjectDb::load(rfs, git_dir)
   let result : Array[LogWalkEntry] = []
@@ -644,8 +660,13 @@ fn log_walk_commits(
     let obj = db.get(rfs, id)
     guard obj is Some(o) else { continue }
     let info = @bitcore.parse_commit(o.data)
-    // Add parents to queue
-    for parent in info.parents {
+    // Add parents to queue (limited to first parent if --first-parent)
+    let parents_to_walk = if first_parent && info.parents.length() > 0 {
+      [info.parents[0]]
+    } else {
+      info.parents
+    }
+    for parent in parents_to_walk {
       let phex = parent.to_hex()
       if not(visited.contains(phex)) && not(exclude_ids.contains(phex)) {
         visited[phex] = true
@@ -805,6 +826,9 @@ async fn log_with_graph(
   decorate : Bool,
   since_ts : Int64,
   until_ts : Int64,
+  revs : Array[String],
+  range_excludes : Array[String],
+  first_parent : Bool,
 ) -> Unit raise Error {
   let db = @bitlib.ObjectDb::load(rfs, git_dir)
   // Collect starting points
@@ -831,7 +855,7 @@ async fn log_with_graph(
         }
       }
     }
-  } else {
+  } else if revs.length() == 0 {
     let head = @bitrepo.rev_parse(rfs, git_dir, "HEAD")
     match head {
       Some(h) => {
@@ -857,6 +881,29 @@ async fn log_with_graph(
         }
       }
       None => return
+    }
+  }
+  // Resolve positional revs and add to starts
+  for rev in revs {
+    match @bitrepo.rev_parse(rfs, git_dir, rev) {
+      Some(id) => starts.push(id)
+      None => raise @bitcore.GitError::InvalidObject("Unknown revision: " + rev)
+    }
+  }
+  // Default to HEAD if nothing specified
+  if starts.length() == 0 {
+    match @bitrepo.rev_parse(rfs, git_dir, "HEAD") {
+      Some(id) => starts.push(id)
+      None => return
+    }
+  }
+  // Build exclude_ids from range_excludes
+  let exclude_ids : Map[String, Bool] = {}
+  for spec in range_excludes {
+    match @bitrepo.rev_parse(rfs, git_dir, spec) {
+      Some(id) => walk_commits_to_map(OsFs::new(), git_dir, id, exclude_ids)
+      None =>
+        raise @bitcore.GitError::InvalidObject("Unknown revision: " + spec)
     }
   }
   // BFS to collect commits with graph structure
@@ -893,12 +940,21 @@ async fn log_with_graph(
       continue
     }
     visited[hex] = true
+    if exclude_ids.contains(hex) {
+      continue
+    }
     let obj = db.get(rfs, current)
     match obj {
       Some(o) => {
         let info = @bitcore.parse_commit(o.data)
-        // Add parents to queue regardless of timestamp filter
-        for i, parent in info.parents {
+        // Add parents to queue (limited to first parent if --first-parent)
+        let parents_to_walk : Array[@bitcore.ObjectId] = if first_parent &&
+          info.parents.length() > 0 {
+          [info.parents[0]]
+        } else {
+          info.parents
+        }
+        for i, parent in parents_to_walk {
           let parent_col = if i == 0 {
             col
           } else {
@@ -910,7 +966,7 @@ async fn log_with_graph(
           }
         }
         // Clear this column if no more commits
-        if info.parents.length() == 0 && col < active_columns.length() {
+        if parents_to_walk.length() == 0 && col < active_columns.length() {
           active_columns[col] = None
         }
         // Apply since/until filters

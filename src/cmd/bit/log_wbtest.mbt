@@ -79,3 +79,32 @@ test "log: log_parse_entry_from_obj" {
   assert_eq(entry.author, "Test User <test@example.com>")
   assert_eq(entry.timestamp, 1700000000L)
 }
+
+///|
+test "log: is_short_count_flag" {
+  assert_true(is_short_count_flag("-5"))
+  assert_true(is_short_count_flag("-10"))
+  assert_false(is_short_count_flag("-n"))
+  assert_false(is_short_count_flag("--oneline"))
+  assert_false(is_short_count_flag("5"))
+}
+
+///|
+test "log: log_queue_insert maintains descending order" {
+  let queue : Array[(Int64, @bitcore.ObjectId)] = []
+  let id1 = @bitcore.ObjectId::from_hex(
+    "1111111111111111111111111111111111111111",
+  )
+  let id2 = @bitcore.ObjectId::from_hex(
+    "2222222222222222222222222222222222222222",
+  )
+  let id3 = @bitcore.ObjectId::from_hex(
+    "3333333333333333333333333333333333333333",
+  )
+  log_queue_insert(queue, (100L, id1))
+  log_queue_insert(queue, (300L, id3))
+  log_queue_insert(queue, (200L, id2))
+  assert_eq(queue[0].0, 300L)
+  assert_eq(queue[1].0, 200L)
+  assert_eq(queue[2].0, 100L)
+}
