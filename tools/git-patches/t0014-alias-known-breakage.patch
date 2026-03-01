@@ -5,7 +5,7 @@ index 07a53e7366..b2757aa8dc 100755
 @@ -79,7 +79,7 @@ can_alias_deprecated_builtin () {
  	test_cmp expect actual
  }
- 
+
 -test_expect_success 'can alias-shadow deprecated builtins' '
 +test_expect_failure 'can alias-shadow deprecated builtins' '
  	for cmd in $(git --list-cmds=deprecated)

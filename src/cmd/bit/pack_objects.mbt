@@ -112,7 +112,7 @@ fn parse_pack_objects_args(args : Array[String]) -> PackObjectsParse {
         "--reflog" => has_unsupported_options = true
         "--indexed-objects" => has_unsupported_options = true
         "--keep-true-parents" => has_unsupported_options = true
-        "--thin" => () // bit doesn't use thin packs, ignore
+        "--thin" => revs = true // --thin implies --revs (like git)
         "--cruft" => cruft = true
         "--cruft-expiration" => {
           if i + 1 >= args.length() {

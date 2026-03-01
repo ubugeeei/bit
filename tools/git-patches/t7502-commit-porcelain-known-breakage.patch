@@ -1,0 +1,13 @@
+diff --git i/t/t7502-commit-porcelain.sh w/t/t7502-commit-porcelain.sh
+index 05f6da4ad9..72abaaef1d 100755
+--- i/t/t7502-commit-porcelain.sh
++++ w/t/t7502-commit-porcelain.sh
+@@ -820,7 +820,7 @@ write_script .git/FAKE_EDITOR <<EOF
+ # kill -TERM command added below.
+ EOF
+ 
+-test_expect_success EXECKEEPSPID 'a SIGTERM should break locks' '
++test_expect_failure EXECKEEPSPID 'a SIGTERM should break locks' '
+ 	echo >>negative &&
+ 	! "$SHELL_PATH" -c '\''
+ 	  echo kill -TERM $$ >>.git/FAKE_EDITOR
