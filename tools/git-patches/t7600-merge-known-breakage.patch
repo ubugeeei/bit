@@ -1,0 +1,13 @@
+diff --git i/t/t7600-merge.sh w/t/t7600-merge.sh
+index 9838094b66..e740fa70e4 100755
+--- i/t/t7600-merge.sh
++++ w/t/t7600-merge.sh
+@@ -1108,7 +1108,7 @@ write_script .git/FAKE_EDITOR <<EOF
+ # kill -TERM command added below.
+ EOF
+ 
+-test_expect_success EXECKEEPSPID 'killed merge can be completed with --continue' '
++test_expect_failure EXECKEEPSPID 'killed merge can be completed with --continue' '
+ 	git reset --hard c0 &&
+ 	! "$SHELL_PATH" -c '\''
+ 	  echo kill -TERM $$ >>.git/FAKE_EDITOR

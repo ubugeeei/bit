@@ -66,23 +66,29 @@ t6005-rev-list-count.sh
 t6006-rev-list-format.sh
 t6007-rev-list-cherry-pick-file.sh
 t6010-merge-base.sh
+t6011-rev-list-with-bad-commit.sh
 t6012-rev-list-simplify.sh
 t6014-rev-list-all.sh
 t6013-rev-list-reverse-parents.sh
 t6017-rev-list-stdin.sh
 t6018-rev-list-glob.sh
 t6019-rev-list-ancestry-path.sh
+t6020-bundle-misc.sh
 t6021-rev-list-exclude-hidden.sh
 t6022-rev-list-missing.sh
 t6030-bisect-porcelain.sh
 t6040-tracking-info.sh
+t6050-replace.sh
 t6100-rev-list-in-order.sh
 t6101-rev-parse-parents.sh
 t6102-rev-list-unexpected-objects.sh
 t6110-rev-list-sparse.sh
 t6111-rev-list-treesame.sh
 t6112-rev-list-filters-objects.sh
+t6113-rev-list-bitmap-filters.sh
+t6115-rev-list-du.sh
 t6114-keep-packs.sh
+t6120-describe.sh
 
 # pathspec
 t6130-pathspec-noglob.sh
@@ -120,6 +126,7 @@ t6416-recursive-corner-cases.sh
 t6417-merge-ours-theirs.sh
 t6418-merge-text-auto.sh
 t6419-merge-ignorecase.sh
+t6421-merge-partial-clone.sh
 t6422-merge-rename-corner-cases.sh
 t6423-merge-rename-directories.sh
 t6425-merge-rename-delete.sh
@@ -134,6 +141,8 @@ t6434-merge-recursive-rename-options.sh
 t6435-merge-sparse.sh
 t6436-merge-overwrite.sh
 t6439-merge-co-error-msgs.sh
+t6500-gc.sh
+t6501-freshen-objects.sh
 
 # reachability / tree-depth
 t6600-test-reach.sh
@@ -195,9 +204,12 @@ t7521-ignored-mode.sh
 t7524-commit-summary.sh
 t7525-status-rename.sh
 t7526-commit-pathspec-file.sh
+t7527-builtin-fsmonitor.sh
 t7528-signed-commit-ssh.sh
 
 # merge (porcelain)
+t7600-merge.sh
+t7601-merge-pull-config.sh
 t7604-merge-custom-message.sh
 t7605-merge-resolve.sh
 t7606-merge-custom.sh
@@ -208,6 +220,11 @@ t7612-merge-verify-signatures.sh
 t7614-merge-signoff.sh
 t7615-diff-algo-with-mergy-operations.sh
 
+# repack
+t7702-repack-cyclic-alternate.sh
+t7703-repack-geometric.sh
+t7704-repack-cruft.sh
+
 # grep
 t7810-grep.sh
 t7811-grep-open.sh
@@ -215,6 +232,9 @@ t7812-grep-icase-non-ascii.sh
 t7813-grep-icase-iso.sh
 t7815-grep-binary.sh
 t7816-grep-binary-pattern.sh
+
+# maintenance
+t7900-maintenance.sh
 
 # archive (t5000)
 t5000-tar-tree.sh
