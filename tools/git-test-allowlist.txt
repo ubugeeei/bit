@@ -9,6 +9,7 @@ t0000-basic.sh
 t0001-init.sh
 
 # plumbing commands
+t1006-cat-file.sh
 t1007-hash-object.sh
 t1300-config.sh
 t1400-update-ref.sh
