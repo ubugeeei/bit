@@ -287,13 +287,38 @@ if [ "$subcmd" = "version" ]; then
   fi
 fi
 
-intercept=0
-for cmd in ${GIT_SHIM_CMDS:-${SHIM_CMDS:-}}; do
-  if [ "$cmd" = "$subcmd" ]; then
-    intercept=1
-    break
+# Check if -c alias.SUBCMD=... overrides the subcommand (git resolves aliases
+# before executing builtins for deprecated commands).  If an alias is set,
+# delegate to real git so alias resolution works correctly.
+has_alias_override=0
+prev_is_c=0
+for arg in "$@"; do
+  if [ "$prev_is_c" -eq 1 ]; then
+    prev_is_c=0
+    case "$arg" in
+      alias."$subcmd"=*|alias."$subcmd")
+        has_alias_override=1
+        break
+        ;;
+    esac
+    continue
   fi
+  case "$arg" in
+    -c) prev_is_c=1 ;;
+    -*) ;;
+    *) break ;;
+  esac
 done
+
+intercept=0
+if [ "$has_alias_override" -eq 0 ]; then
+  for cmd in ${GIT_SHIM_CMDS:-${SHIM_CMDS:-}}; do
+    if [ "$cmd" = "$subcmd" ]; then
+      intercept=1
+      break
+    fi
+  done
+fi
 
 if [ "$intercept" -eq 1 ]; then
   case "$subcmd" in
