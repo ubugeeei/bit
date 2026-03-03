@@ -1,6 +1,6 @@
 # TODO (Active Only)
 
-最終整理日: 2026-03-02
+最終整理日: 2026-03-03
 方針: 完了ログは一旦外し、未完了タスクのみ管理する。
 現バージョン: v0.26.3
 allowlist: 906/927 テスト（97.7%）
@@ -65,9 +65,108 @@ allowlist: 906/927 テスト（97.7%）
 
 - [x] `--unpack-unreachable` の実装（2026-03-03, v0.26.3）
   - t7700 テスト 20/25 の `!BIT_PACK_OBJECTS` prereq skip パッチ削除（`--filter` 実装済み）
-  - [ ] `--unpack-unreachable=<date>` の mtime チェック（t7700 では未テスト）
+  - [x] `--unpack-unreachable=<date>` の mtime チェック（2026-03-03）
 - [ ] `--help` 移植: 外部 help テキスト実体の整備（必要コマンド分）
   - [x] spec 駆動化 / 回帰テスト / オプトイン外部読込 / shim fallback 判定（完了済み）
+
+## P3.5: realgit 委譲の削減
+
+方針: CI SHIM_STRICT=1 で bit に通すコマンドを段階的に増やす。
+現状 CI SHIM_CMDS: `receive-pack upload-pack pack-objects index-pack shell pack-redundant`（6個）
+full mode: 53 コマンド実装済み → 47 コマンドが CI 未検証で realgit フォールバック
+
+### Step 1: 実装済みコマンドを CI SHIM_CMDS に追加（テスト頻度順）
+
+各コマンドを追加 → CI で壊れるテスト特定 → 修正 → マージ の繰り返し。
+
+#### Tier 1: 超高頻度（1000+ 呼出、テスト基盤コマンド）
+- [ ] `rev-parse` (3792)
+- [ ] `checkout` (3765)
+- [ ] `commit` (3596)
+- [ ] `add` (3268)
+- [ ] `config` (2626)
+- [ ] `reset` (1923)
+- [ ] `branch` (1749)
+- [ ] `init` (1667)
+- [ ] `tag` (1199)
+- [ ] `diff` (1196)
+- [ ] `log` (1173)
+- [ ] `ls-files` (1162)
+
+#### Tier 2: 高頻度（400–999 呼出）
+- [ ] `rebase` (991)
+- [ ] `clone` (953)
+- [ ] `cat-file` (921)
+- [ ] `merge` (889)
+- [ ] `update-ref` (824)
+- [ ] `hash-object` (614)
+- [ ] `status` (608)
+- [ ] `submodule` (603)
+- [ ] `notes` (600)
+- [ ] `push` (534)
+- [ ] `mv` (488)
+- [ ] `stash` (472)
+- [ ] `rm` (470)
+- [ ] `fetch` (461)
+- [ ] `worktree` (421)
+- [ ] `bisect` (420)
+
+#### Tier 3: 中頻度（100–399 呼出）
+- [ ] `show` (362)
+- [ ] `symbolic-ref` (335)
+- [ ] `cherry-pick` (324)
+- [ ] `grep` (312)
+- [ ] `format-patch` (300)
+- [ ] `remote` (298)
+- [ ] `reflog` (296)
+- [ ] `switch` (251)
+- [ ] `pull` (250)
+- [ ] `show-ref` (239)
+- [ ] `clean` (232)
+- [ ] `diff-index` (219)
+- [ ] `ls-tree` (180)
+- [ ] `diff-files` (170)
+- [ ] `write-tree` (147)
+- [ ] `sparse-checkout` (113)
+- [ ] `blame` (110)
+
+#### Tier 4: 低頻度（<100 呼出）
+- [ ] `revert` (82)
+- [ ] `gc` (81)
+- [ ] `shortlog` (53)
+- [ ] `describe` (53)
+
+### Step 2: 未実装コマンドの新規実装（テスト頻度順）
+
+full mode にも含まれない高頻度 plumbing / porcelain。
+
+- [ ] `update-index` (720) — plumbing: index 直接操作
+- [ ] `rev-list` (521) — plumbing: コミット列挙
+- [ ] `apply` (398) — パッチ適用
+- [ ] `repack` (302) — 内部で pack-objects 呼出
+- [ ] `am` (235) — apply + commit
+- [ ] `for-each-ref` (234) — ref 列挙 (format 出力)
+- [ ] `diff-tree` (224) — plumbing: tree 間 diff
+- [ ] `fast-import` (196) — bulk import
+- [ ] `read-tree` (176) — plumbing: tree → index
+- [ ] `fsck` (159) — 整合性チェック
+- [ ] `commit-graph` (137) — commit-graph 管理
+- [ ] `archive` (135) — アーカイブ生成
+- [ ] `multi-pack-index` (133) — MIDX 管理
+- [ ] `ls-remote` (127) — リモート ref 列挙
+- [ ] `restore` (117) — worktree/index 復元
+- [ ] `commit-tree` (114) — plumbing: commit 生成
+- [ ] `bundle` (110) — bundle 作成/検証
+- [ ] `stripspace` (108) — テキスト整形
+- [ ] `checkout-index` (108) — plumbing: index → worktree
+
+### 作業手順
+
+1. 対象コマンドを CI SHIM_CMDS に追加するブランチを作成
+2. CI を回して失敗テストを特定
+3. bit 実装の修正 or `!BIT_<CMD>` prereq skip パッチで対応
+4. `just release-check` → CI 通過を確認
+5. マージ後、次のコマンドへ
 
 ## P4: WASM / クロスプラットフォーム
 

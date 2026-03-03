@@ -3119,7 +3119,7 @@ fn collect_reflog_ids_recursive(
 /// Loosen unreachable packed objects that are not in the new pack,
 /// not in .keep packs, and not in alternate ODBs.
 /// This implements the `--unpack-unreachable` semantics from git pack-objects.
-fn loosen_unused_packed_objects(
+async fn loosen_unused_packed_objects(
   fs : OsFs,
   git_dir : String,
   db : @bitlib.ObjectDb,
@@ -3168,6 +3168,17 @@ fn loosen_unused_packed_objects(
     if not(fs.is_file(idx_path)) {
       continue
     }
+    // Get pack file mtime for expiration check
+    let pack_mtime = if cfg.unpack_unreachable_expiration > 0L {
+      let pack_name = base + ".pack"
+      let pack_path = pack_dir + "/" + pack_name
+      let (sec, _) = @asyncfs.mtime(pack_path[:], follow_symlink=true) catch {
+        _ => (0L, 0)
+      }
+      sec
+    } else {
+      0L
+    }
     let ids = collect_pack_index_ids(fs, idx_path)
     for hex in ids {
       // Already in the new pack
@@ -3178,12 +3189,13 @@ fn loosen_unused_packed_objects(
       if skip_ids.contains(hex) {
         continue
       }
-      // expiration check: if set, objects older than expiration are discarded
-      // (not loosened). For expiration=0 (no date), always loosen.
+      // expiration check: if set, objects in old packs are discarded (not loosened).
+      // Pack newer than expiration → loosen; pack older → discard.
       if cfg.unpack_unreachable_expiration > 0L {
-        // With expiration date, skip loosening (discard) — mtime check
-        // would go here for full --unpack-unreachable=<date> support
-        continue
+        if pack_mtime <= cfg.unpack_unreachable_expiration {
+          continue // discard: pack is old enough
+        }
+        // fall through to loosen: pack is newer than expiration
       }
       // Check if already exists as a loose object
       let prefix = String::unsafe_substring(hex, start=0, end=2)
