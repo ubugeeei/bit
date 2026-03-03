@@ -117,29 +117,29 @@ jobs:
           tests=$(tools/select-git-tests.sh "${{ matrix.shard }}" 5 tools/git-test-allowlist.txt)
           echo "Shard ${{ matrix.shard }}: $(echo "$tests" | wc -w | tr -d ' ') tests"
 
-          SHIM_REAL_GIT="$real_git" SHIM_EXEC_PATH="$exec_path" \
+          export SHIM_REAL_GIT="$real_git" SHIM_EXEC_PATH="$exec_path" \
           SHIM_MOON="$(pwd)/tools/git-shim/moon" \
           SHIM_CMDS="init status add commit log show branch checkout switch reset rebase stash cherry-pick diff diff-files diff-index merge tag rm mv config sparse-checkout rev-parse cat-file ls-files hash-object ls-tree write-tree show-ref update-ref symbolic-ref reflog worktree gc clean grep submodule revert notes bisect describe blame format-patch shortlog remote clone fetch pull push receive-pack upload-pack pack-objects index-pack shell pack-redundant" SHIM_STRICT=1 \
           GIT_TEST_INSTALLED="$shim_dir" GIT_TEST_EXEC_PATH="$exec_path" \
-          GIT_TEST_DEFAULT_HASH=sha1 \
-          make -k -C third_party/git test T="$tests" || true
+          GIT_TEST_DEFAULT_HASH=sha1
 
-      - name: Summarize test failures
-        if: always()
-        run: |
-          echo "=== Failed test files ==="
-          find third_party/git/t/test-results -name '*.exit' 2>/dev/null | while read f; do
-            code=$(cat "$f")
-            test_name=$(basename "$f" .exit)
-            if [ "$code" != "0" ]; then
-              counts=$(cat "third_party/git/t/test-results/${test_name}.counts" 2>/dev/null | tr '\n' ' ')
-              echo "FAIL $test_name (exit=$code) $counts"
+          failed_tests=""
+          passed=0
+          failed=0
+          for t in $tests; do
+            if make -C third_party/git test T="$t" 2>&1 | tail -5; then
+              passed=$((passed + 1))
+            else
+              failed=$((failed + 1))
+              failed_tests="$failed_tests $t"
             fi
-          done | sort
+          done
           echo "=== Summary ==="
-          total=$(find third_party/git/t/test-results -name '*.exit' 2>/dev/null | wc -l)
-          failed=$(find third_party/git/t/test-results -name '*.exit' 2>/dev/null -exec grep -l '[^0]' {} \; | wc -l)
-          echo "Total: $total, Failed: $failed, Passed: $((total - failed))"
+          echo "Passed: $passed, Failed: $failed"
+          if [ -n "$failed_tests" ]; then
+            echo "Failed tests:$failed_tests"
+            exit 1
+          fi
 
       - name: Generate compat table
         if: always()
