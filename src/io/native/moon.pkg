@@ -25,6 +25,7 @@ options(
     "remote.mbt": [ "native" ],
     "upload_pack_http.mbt": [ "native" ],
     "upload_pack_http_common.mbt": [ "native" ],
+    "upload_pack_http_common_wbtest.mbt": [ "native" ],
     "upload_pack_process.mbt": [ "native" ],
     "upload_pack_process_wbtest.mbt": [ "native" ],
     "upload_pack_remote_native.mbt": [ "native" ],

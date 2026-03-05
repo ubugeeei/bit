@@ -42,6 +42,8 @@ allowlist: 990 テスト
 - [ ] SSH clone の JS target 対応（Issue #18）
   - [x] native-only の制約を文書化（2026-03-05）
   - [ ] HTTP smart protocol で JS 対応
+    - [x] SSH URL → HTTPS smart URL 変換ユーティリティ追加（2026-03-05）
+    - [x] JS clone/fetch/pull/push 経路へ適用（2026-03-05）
   - relay 経由 clone は両 target で動作済み
 
 ## P2: パフォーマンス

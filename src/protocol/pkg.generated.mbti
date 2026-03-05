@@ -59,6 +59,8 @@ pub fn select_default_ref(Array[(@object.ObjectId, String)], Map[String, String]
 
 pub fn select_default_wants(Array[(@object.ObjectId, String)], Map[String, String]) -> Array[@object.ObjectId]
 
+pub fn ssh_remote_to_https(String) -> String?
+
 // Errors
 
 // Types and methods

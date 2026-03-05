@@ -144,3 +144,36 @@ test "extract_capabilities" {
   assert_true(caps.contains("report-status"))
   assert_true(caps.contains("side-band-64k"))
 }
+
+///|
+test "ssh_remote_to_https converts scp-style ssh remote" {
+  inspect(
+    ssh_remote_to_https("git@github.com:user/repo.git"),
+    content="Some(\"https://github.com/user/repo.git\")",
+  )
+}
+
+///|
+test "ssh_remote_to_https converts ssh:// remote" {
+  inspect(
+    ssh_remote_to_https("ssh://git@github.com/user/repo.git"),
+    content="Some(\"https://github.com/user/repo.git\")",
+  )
+}
+
+///|
+test "ssh_remote_to_https drops explicit ssh port" {
+  inspect(
+    ssh_remote_to_https("ssh://git@github.com:2222/user/repo.git"),
+    content="Some(\"https://github.com/user/repo.git\")",
+  )
+}
+
+///|
+test "ssh_remote_to_https returns none for non-ssh remotes" {
+  inspect(
+    ssh_remote_to_https("https://github.com/user/repo.git"),
+    content="None",
+  )
+  inspect(ssh_remote_to_https("file:///tmp/repo.git"), content="None")
+}

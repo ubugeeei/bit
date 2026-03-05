@@ -13,11 +13,12 @@ pub async fn upload_pack_info_refs_with_http(
   prefer_v2 : Bool,
   http_get : async (String, Map[String, String]) -> (@bit.HttpResponse, Bytes) raise @bit.GitError,
 ) -> Bytes raise @bit.GitError {
-  let spec = @protocol.parse_remote(remote)
+  let normalized_remote = normalize_remote_for_http_transport(remote)
+  let spec = @protocol.parse_remote(normalized_remote)
   if spec.kind != @protocol.RemoteKind::Http {
     raise @bit.GitError::ProtocolError("HTTP transport required")
   }
-  let base = spec.base_url.unwrap_or(remote)
+  let base = spec.base_url.unwrap_or(normalized_remote)
   let url = "\{base}/info/refs?service=git-upload-pack"
   let headers : Map[String, String] = {
     "User-Agent": "git/moonbit",
@@ -46,11 +47,12 @@ pub async fn upload_pack_request_with_http(
     Bytes,
   ) raise @bit.GitError,
 ) -> Bytes raise @bit.GitError {
-  let spec = @protocol.parse_remote(remote)
+  let normalized_remote = normalize_remote_for_http_transport(remote)
+  let spec = @protocol.parse_remote(normalized_remote)
   if spec.kind != @protocol.RemoteKind::Http {
     raise @bit.GitError::ProtocolError("HTTP transport required")
   }
-  let base = spec.base_url.unwrap_or(remote)
+  let base = spec.base_url.unwrap_or(normalized_remote)
   let url = "\{base}/git-upload-pack"
   let headers : Map[String, String] = {
     "User-Agent": "git/moonbit",
@@ -174,6 +176,23 @@ pub async fn fetch_pack_with_http(
   let req = @protocol.build_fetch_request_v0("git/moonbit", wants, caps)
   let resp = upload_pack_request_with_http(remote, req, false, http_post)
   @protocol.extract_pack_from_v0_response(resp)
+}
+
+///|
+fn normalize_remote_for_http_transport(
+  remote : String,
+) -> String raise @bit.GitError {
+  let spec = @protocol.parse_remote(remote)
+  match spec.kind {
+    @protocol.RemoteKind::Http => remote
+    @protocol.RemoteKind::Ssh =>
+      match @protocol.ssh_remote_to_https(remote) {
+        Some(url) => url
+        None => raise @bit.GitError::ProtocolError("HTTP transport required")
+      }
+    @protocol.RemoteKind::File =>
+      raise @bit.GitError::ProtocolError("HTTP transport required")
+  }
 }
 
 ///|

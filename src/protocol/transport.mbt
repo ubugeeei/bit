@@ -93,12 +93,58 @@ pub fn parse_remote(remote : String) -> RemoteSpec {
 }
 
 ///|
+/// Convert SSH-style remote URL into HTTPS smart transport URL.
+/// Returns None for non-SSH remotes.
+pub fn ssh_remote_to_https(remote : String) -> String? {
+  let spec = parse_remote(remote)
+  if spec.kind != RemoteKind::Ssh {
+    return None
+  }
+  guard spec.host is Some(raw_host) else { return None }
+  let host = normalize_ssh_host_for_https(raw_host)
+  let path = normalize_ssh_path_for_https(spec.path)
+  if host.length() == 0 || path.length() == 0 {
+    return None
+  }
+  Some("https://" + host + "/" + path)
+}
+
+///|
 fn normalize_http_url(url : String) -> String {
   if url.has_suffix(".git") {
     String::unsafe_substring(url, start=0, end=url.length() - 4)
   } else {
     url
   }
+}
+
+///|
+fn normalize_ssh_host_for_https(raw_host : String) -> String {
+  let host_with_port = match raw_host.rev_find("@") {
+    Some(idx) =>
+      String::unsafe_substring(raw_host, start=idx + 1, end=raw_host.length())
+    None => raw_host
+  }
+  if host_with_port.has_prefix("[") {
+    match host_with_port.find("]") {
+      Some(idx) => String::unsafe_substring(host_with_port, start=1, end=idx)
+      None => host_with_port
+    }
+  } else {
+    match host_with_port.find(":") {
+      Some(idx) => String::unsafe_substring(host_with_port, start=0, end=idx)
+      None => host_with_port
+    }
+  }
+}
+
+///|
+fn normalize_ssh_path_for_https(raw_path : String) -> String {
+  let mut start = 0
+  while start < raw_path.length() && raw_path[start] == '/' {
+    start += 1
+  }
+  String::unsafe_substring(raw_path, start~, end=raw_path.length())
 }
 
 ///|
