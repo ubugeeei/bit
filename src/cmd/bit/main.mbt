@@ -784,7 +784,7 @@ fn should_delegate_to_real_git(
   match opts.subcmd {
     Some(cmd) =>
       if cmd == "config" || cmd == "worktree" || cmd == "status" {
-        true
+        has_config_env
       } else {
         has_config_env
       }
@@ -976,7 +976,7 @@ fn command_handles_builtin_help(cmd : String) -> Bool {
   for
     name in [
       "receive-pack", "upload-pack", "pack-objects", "index-pack", "scalar", "branch",
-      "merge",
+      "merge", "reflog",
     ] {
     if cmd == name {
       return true

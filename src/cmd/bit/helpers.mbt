@@ -720,3 +720,56 @@ async fn run_merge_with_sensitive_hooks(
   hooks_ensure_sensitive_hook_approval(fs, rfs, root, "post-merge")
   @bitlib.merge(fs, rfs, root, target, message, author, timestamp)
 }
+
+///|
+fn make_relative_to_cwd(path : String) -> String {
+  if not(path.has_prefix("/")) {
+    return path
+  }
+  let cwd = match @sys.get_env_var("GIT_SHIM_PWD") {
+    Some(d) => d
+    None =>
+      match @env.current_dir() {
+        Some(d) => d
+        None => return path
+      }
+  }
+  if cwd.length() == 0 {
+    return path
+  }
+  let prefix = if cwd.has_suffix("/") { cwd } else { cwd + "/" }
+  if path.has_prefix(prefix) {
+    let rel = (try! path[prefix.length():]).to_string()
+    if rel.length() == 0 {
+      "."
+    } else {
+      rel
+    }
+  } else {
+    path
+  }
+}
+
+///|
+fn quote_origin_path(path : String) -> String {
+  let mut needs_quote = false
+  for ch in path {
+    if ch == '"' || ch == '\t' || ch == '\\' || ch == '\n' {
+      needs_quote = true
+      break
+    }
+  }
+  if not(needs_quote) {
+    return path
+  }
+  let buf = StringBuilder::new()
+  buf.write_char('"')
+  for ch in path {
+    if ch == '"' || ch == '\\' {
+      buf.write_char('\\')
+    }
+    buf.write_char(ch)
+  }
+  buf.write_char('"')
+  buf.to_string()
+}

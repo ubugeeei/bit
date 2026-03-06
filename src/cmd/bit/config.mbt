@@ -22,6 +22,8 @@ async fn handle_config(args : Array[String]) -> Unit raise Error {
   let mut rename_section_mode = false
   let mut fixed_value_mode = false
   let mut edit_mode = false
+  let mut show_scope = false
+  let mut show_origin = false
   let mut name_only = false
   let mut null_terminator = false
   let mut local_mode = false
@@ -148,6 +150,19 @@ async fn handle_config(args : Array[String]) -> Unit raise Error {
       "--name-only" => name_only = true
       "--null" | "-z" => null_terminator = true
       "-e" | "--edit" | "edit" => edit_mode = true
+      "--show-scope" => show_scope = true
+      "--show-origin" => show_origin = true
+      "--get-urlmatch" => {
+        delegate_config_to_real_git(args)
+        return
+      }
+      _ if arg.has_prefix("--url=") ||
+        arg.has_prefix("--blob=") ||
+        arg == "--blob" ||
+        arg == "--includes" => {
+        delegate_config_to_real_git(args)
+        return
+      }
       "--no-get" => {
         eprint_line("error: unknown option `no-get'")
         @sys.exit(129)
@@ -236,6 +251,15 @@ async fn handle_config(args : Array[String]) -> Unit raise Error {
     raise @bitcore.GitError::InvalidObject(
       "--worktree cannot be used with --global or --system",
     )
+  }
+  // --local / --worktree require being inside a repository
+  if (local_mode || worktree_mode) && config_path_override is None {
+    let root = get_work_root()
+    if find_repo_root(root) is None {
+      let flag = if worktree_mode { "--worktree" } else { "--local" }
+      eprint_line("fatal: \{flag} can only be used inside a git repository")
+      @sys.exit(128)
+    }
   }
   let config_path = match config_path_override {
     Some(path) => if path == "-" { "-" } else { resolve_in_cwd(path) }
@@ -331,6 +355,18 @@ async fn handle_config(args : Array[String]) -> Unit raise Error {
       validate_config_file(config_path, raw_content)
     }
   }
+  // Check if specified config file exists (required for explicit scope modes in read operations)
+  let is_read_op = list_mode || get_mode || get_all_mode || get_regexp_mode
+  if is_read_op && config_path != "-" && not(@fs.path_exists(config_path)) {
+    if config_path_override is Some(_) ||
+      (global_mode && @sys.get_env_var("GIT_CONFIG_GLOBAL") is Some(_)) ||
+      (system_mode && @sys.get_env_var("GIT_CONFIG_SYSTEM") is Some(_)) {
+      eprint_line(
+        "fatal: unable to read config file '\{config_path}': No such file or directory",
+      )
+      @sys.exit(128)
+    }
+  }
   // Handle --list
   if list_mode {
     if fixed_value_mode {
@@ -338,14 +374,111 @@ async fn handle_config(args : Array[String]) -> Unit raise Error {
         "--fixed-value is not supported for --list",
       )
     }
+    let need_multi_source = (show_scope || show_origin) &&
+      config_path_override is None &&
+      not(global_mode) &&
+      not(system_mode) &&
+      not(local_mode)
+    if need_multi_source {
+      // Multi-source list with scope/origin prefix
+      let rfs3 : &@bitcore.RepoFileSystem = fs
+      let nosystem = @sys.get_env_var("GIT_CONFIG_NOSYSTEM")
+      if nosystem is None || nosystem == Some("false") {
+        let sys_path = @sys.get_env_var("GIT_CONFIG_SYSTEM").unwrap_or(
+          "/etc/gitconfig",
+        )
+        if rfs3.is_file(sys_path) {
+          let scope = if show_scope { "system" } else { "" }
+          let origin = if show_origin {
+            "file:" + quote_origin_path(sys_path)
+          } else {
+            ""
+          }
+          list_config(fs, sys_path, name_only, null_terminator, scope~, origin~)
+        }
+      }
+      // Global: GIT_CONFIG_GLOBAL or XDG + HOME
+      let global_path = match @sys.get_env_var("GIT_CONFIG_GLOBAL") {
+        Some(p) => [p]
+        None => {
+          let paths : Array[String] = []
+          match @sys.get_env_var("HOME") {
+            Some(home) => {
+              let xdg = home + "/.config/git/config"
+              if rfs3.is_file(xdg) {
+                paths.push(xdg)
+              }
+              let gitconfig = home + "/.gitconfig"
+              if rfs3.is_file(gitconfig) {
+                paths.push(gitconfig)
+              }
+            }
+            None => ()
+          }
+          paths
+        }
+      }
+      for gp in global_path {
+        if rfs3.is_file(gp) {
+          let scope = if show_scope { "global" } else { "" }
+          let origin = if show_origin {
+            "file:" + quote_origin_path(gp)
+          } else {
+            ""
+          }
+          list_config(fs, gp, name_only, null_terminator, scope~, origin~)
+        }
+      }
+      // Local
+      let root = get_work_root()
+      let git_dir = resolve_git_dir(rfs3, root)
+      let local_path = git_dir + "/config"
+      if rfs3.is_file(local_path) {
+        let scope = if show_scope { "local" } else { "" }
+        let origin = if show_origin {
+          "file:" + quote_origin_path(make_relative_to_cwd(local_path))
+        } else {
+          ""
+        }
+        list_config(fs, local_path, name_only, null_terminator, scope~, origin~)
+      }
+      return
+    }
     if config_path == "-" {
       match stdin_content {
-        Some(content) =>
-          list_config_from_content(content, name_only, null_terminator)
+        Some(content) => {
+          let scope = if show_scope { "command line" } else { "" }
+          let origin = if show_origin { "standard input:" } else { "" }
+          list_config_from_content(
+            content,
+            name_only,
+            null_terminator,
+            scope~,
+            origin~,
+          )
+        }
         None => @sys.exit(1)
       }
     } else if fs.is_file(config_path) {
-      list_config(fs, config_path, name_only, null_terminator)
+      let scope = if show_scope {
+        if global_mode {
+          "global"
+        } else if system_mode {
+          "system"
+        } else if local_mode || config_path_override is None {
+          "local"
+        } else {
+          "command line"
+        }
+      } else {
+        ""
+      }
+      let origin = if show_origin {
+        "file:" + quote_origin_path(make_relative_to_cwd(config_path))
+      } else {
+        ""
+      }
+      list_config(fs, config_path, name_only, null_terminator, scope~, origin~)
     } else if config_path_override is Some(_) {
       @sys.exit(1)
     }
@@ -363,27 +496,172 @@ async fn handle_config(args : Array[String]) -> Unit raise Error {
     if fixed_value_mode && vp is None {
       raise @bitcore.GitError::InvalidObject("value required for --fixed-value")
     }
+    let regexp_scope = if show_scope {
+      if global_mode {
+        "global"
+      } else if system_mode {
+        "system"
+      } else {
+        "local"
+      }
+    } else {
+      ""
+    }
+    let regexp_origin = if show_origin {
+      if config_path == "-" {
+        "standard input:"
+      } else {
+        "file:" + quote_origin_path(make_relative_to_cwd(config_path))
+      }
+    } else {
+      ""
+    }
     if config_path == "-" {
       let found = match stdin_content {
         Some(content) =>
           get_regexp_config_from_content(
-            content, k, vp, fixed_value_mode, get_bool, get_int, name_only, null_terminator,
+            content,
+            k,
+            vp,
+            fixed_value_mode,
+            get_bool,
+            get_int,
+            name_only,
+            null_terminator,
             "standard input",
+            scope=regexp_scope,
+            origin=regexp_origin,
           )
         None => false
       }
       if not(found) {
         @sys.exit(1)
       }
-    } else if fs.is_file(config_path) {
-      let found = get_regexp_config(
-        fs, config_path, k, vp, fixed_value_mode, get_bool, get_int, name_only, null_terminator,
-      )
+    } else {
+      // Multi-source get-regexp when no explicit scope
+      let need_multi_source = (show_scope || show_origin) &&
+        config_path_override is None &&
+        not(global_mode) &&
+        not(system_mode) &&
+        not(local_mode)
+      let mut found = false
+      if need_multi_source {
+        let rfs4 : &@bitcore.RepoFileSystem = fs
+        let nosystem = @sys.get_env_var("GIT_CONFIG_NOSYSTEM")
+        if nosystem is None || nosystem == Some("false") {
+          let sys_path = @sys.get_env_var("GIT_CONFIG_SYSTEM").unwrap_or(
+            "/etc/gitconfig",
+          )
+          if rfs4.is_file(sys_path) {
+            let sc = if show_scope { "system" } else { "" }
+            let or_ = if show_origin {
+              "file:" + quote_origin_path(sys_path)
+            } else {
+              ""
+            }
+            if get_regexp_config(
+                fs,
+                sys_path,
+                k,
+                vp,
+                fixed_value_mode,
+                get_bool,
+                get_int,
+                name_only,
+                null_terminator,
+                scope=sc,
+                origin=or_,
+              ) {
+              found = true
+            }
+          }
+        }
+        let global_paths = match @sys.get_env_var("GIT_CONFIG_GLOBAL") {
+          Some(p) => [p]
+          None => {
+            let paths : Array[String] = []
+            match @sys.get_env_var("HOME") {
+              Some(home) => {
+                let xdg = home + "/.config/git/config"
+                if rfs4.is_file(xdg) {
+                  paths.push(xdg)
+                }
+                let gitconfig = home + "/.gitconfig"
+                if rfs4.is_file(gitconfig) {
+                  paths.push(gitconfig)
+                }
+              }
+              None => ()
+            }
+            paths
+          }
+        }
+        for gp in global_paths {
+          if rfs4.is_file(gp) {
+            let sc = if show_scope { "global" } else { "" }
+            let or_ = if show_origin {
+              "file:" + quote_origin_path(gp)
+            } else {
+              ""
+            }
+            if get_regexp_config(
+                fs,
+                gp,
+                k,
+                vp,
+                fixed_value_mode,
+                get_bool,
+                get_int,
+                name_only,
+                null_terminator,
+                scope=sc,
+                origin=or_,
+              ) {
+              found = true
+            }
+          }
+        }
+        if rfs4.is_file(config_path) {
+          let sc = if show_scope { "local" } else { "" }
+          let or_ = if show_origin {
+            "file:" + quote_origin_path(make_relative_to_cwd(config_path))
+          } else {
+            ""
+          }
+          if get_regexp_config(
+              fs,
+              config_path,
+              k,
+              vp,
+              fixed_value_mode,
+              get_bool,
+              get_int,
+              name_only,
+              null_terminator,
+              scope=sc,
+              origin=or_,
+            ) {
+            found = true
+          }
+        }
+      } else if fs.is_file(config_path) {
+        found = get_regexp_config(
+          fs,
+          config_path,
+          k,
+          vp,
+          fixed_value_mode,
+          get_bool,
+          get_int,
+          name_only,
+          null_terminator,
+          scope=regexp_scope,
+          origin=regexp_origin,
+        )
+      }
       if not(found) {
         @sys.exit(1)
       }
-    } else {
-      @sys.exit(1)
     }
     return
   }
@@ -484,6 +762,58 @@ async fn handle_config(args : Array[String]) -> Unit raise Error {
     return
   }
   if get_mode || value is None {
+    // Compute scope/origin prefix for get value output
+    let get_scope_prefix = if show_scope {
+      let scope_name = if global_mode {
+        "global"
+      } else if system_mode {
+        "system"
+      } else {
+        "local"
+      }
+      scope_name + "\t"
+    } else {
+      ""
+    }
+    let get_origin_prefix = if show_origin {
+      if config_path == "-" {
+        "standard input:\t"
+      } else {
+        "file:" + quote_origin_path(make_relative_to_cwd(config_path)) + "\t"
+      }
+    } else {
+      ""
+    }
+    let get_default_scope_prefix = if show_scope { "command\t" } else { "" }
+    let get_default_origin_prefix = if show_origin {
+      "command line:\t"
+    } else {
+      ""
+    }
+    // If key is empty/invalid and we have a default, return default directly
+    if parse_config_key(k) is None && default_value is Some(def) {
+      let formatted = format_config_output_value(
+        def,
+        get_bool,
+        get_int,
+        get_bool_or_int,
+        get_path,
+        get_expiry_date,
+        get_color,
+        Some(k),
+        (None : String?),
+        (None : Int?),
+      )
+      let prefixed = get_default_origin_prefix +
+        get_default_scope_prefix +
+        formatted
+      if null_terminator {
+        print_nul_terminated(prefixed)
+      } else {
+        print_line(prefixed)
+      }
+      return
+    }
     // Read config
     if fixed_value_mode {
       let has_pattern = value_pattern is Some(_) || value is Some(_)
@@ -528,10 +858,13 @@ async fn handle_config(args : Array[String]) -> Unit raise Error {
               (None : String?),
               (None : Int?),
             )
+            let prefixed = get_default_origin_prefix +
+              get_default_scope_prefix +
+              formatted
             if null_terminator {
-              print_nul_terminated(formatted)
+              print_nul_terminated(prefixed)
             } else {
-              print_line(formatted)
+              print_line(prefixed)
             }
           }
           None => @sys.exit(1)
@@ -555,10 +888,11 @@ async fn handle_config(args : Array[String]) -> Unit raise Error {
             source_name,
             (None : Int?),
           )
+          let prefixed = get_origin_prefix + get_scope_prefix + formatted
           if null_terminator {
-            print_nul_terminated(formatted)
+            print_nul_terminated(prefixed)
           } else {
-            print_line(formatted)
+            print_line(prefixed)
           }
         }
       }
@@ -623,10 +957,11 @@ async fn handle_config(args : Array[String]) -> Unit raise Error {
             value_source,
             line_hint,
           )
+          let prefixed = get_origin_prefix + get_scope_prefix + formatted
           if null_terminator {
-            print_nul_terminated(formatted)
+            print_nul_terminated(prefixed)
           } else {
-            print_line(formatted)
+            print_line(prefixed)
           }
         }
         None =>
@@ -644,10 +979,13 @@ async fn handle_config(args : Array[String]) -> Unit raise Error {
                 (None : String?),
                 (None : Int?),
               )
+              let prefixed = get_default_origin_prefix +
+                get_default_scope_prefix +
+                formatted
               if null_terminator {
-                print_nul_terminated(formatted)
+                print_nul_terminated(prefixed)
               } else {
-                print_line(formatted)
+                print_line(prefixed)
               }
             }
             None =>
@@ -1147,6 +1485,35 @@ fn remove_empty_sections(
   for range in section_ranges {
     let (idx, matches, keys, comments) = range
     if matches && not(keys) && not(comments) {
+      // Don't remove if a preceding comment (not part of continuation) exists
+      // before the section header. Scan backwards skipping blank lines.
+      let mut skip_section = false
+      let mut j = idx - 1
+      while j >= 0 {
+        let prev = trim_string(lines[j])
+        if prev.length() == 0 {
+          j -= 1
+          continue
+        }
+        if prev[0] == '#' || prev[0] == ';' {
+          // Check if this is part of a continuation line
+          // by scanning further back for a line ending with '\'
+          let mut is_continuation = false
+          if j > 0 {
+            let before = lines[j - 1]
+            if before.has_suffix("\\") {
+              is_continuation = true
+            }
+          }
+          if not(is_continuation) {
+            skip_section = true
+          }
+        }
+        break
+      }
+      if skip_section {
+        continue
+      }
       remove_headers.push(idx)
     }
   }
@@ -1448,12 +1815,14 @@ async fn list_config(
   config_path : String,
   name_only : Bool,
   null_terminator : Bool,
+  scope? : String = "",
+  origin? : String = "",
 ) -> Unit raise Error {
   if not(fs.is_file(config_path)) {
     return
   }
   let content = decode_bytes(fs.read_file(config_path))
-  list_config_from_content(content, name_only, null_terminator)
+  list_config_from_content(content, name_only, null_terminator, scope~, origin~)
 }
 
 ///|
@@ -1461,6 +1830,8 @@ async fn list_config_from_content(
   content : String,
   name_only : Bool,
   null_terminator : Bool,
+  scope? : String = "",
+  origin? : String = "",
 ) -> Unit raise Error {
   let lines = config_lines_from_content(content)
   let mut current_section = ""
@@ -1491,7 +1862,12 @@ async fn list_config_from_content(
                 None => current_section + "." + key_part
               }
               print_config_list_entry(
-                full_key, val_part, name_only, null_terminator,
+                full_key,
+                val_part,
+                name_only,
+                null_terminator,
+                scope~,
+                origin~,
               )
             }
             None => {
@@ -1507,6 +1883,8 @@ async fn list_config_from_content(
                   config_novalue(),
                   name_only,
                   null_terminator,
+                  scope~,
+                  origin~,
                 )
               }
             }
@@ -1534,7 +1912,12 @@ async fn list_config_from_content(
               None => current_section + "." + key_part
             }
             print_config_list_entry(
-              full_key, val_part, name_only, null_terminator,
+              full_key,
+              val_part,
+              name_only,
+              null_terminator,
+              scope~,
+              origin~,
             )
           }
           None => {
@@ -1552,6 +1935,8 @@ async fn list_config_from_content(
                 config_novalue(),
                 name_only,
                 null_terminator,
+                scope~,
+                origin~,
               )
             }
           }
@@ -1567,24 +1952,32 @@ async fn print_config_list_entry(
   value : String,
   name_only : Bool,
   null_terminator : Bool,
+  scope? : String = "",
+  origin? : String = "",
 ) -> Unit {
+  let prefix = if origin.length() > 0 {
+    origin + "\t" + (if scope.length() > 0 { scope + "\t" } else { "" })
+  } else if scope.length() > 0 {
+    scope + "\t"
+  } else {
+    ""
+  }
   if name_only {
     if null_terminator {
-      print_nul_terminated(full_key)
+      print_nul_terminated(prefix + full_key)
     } else {
-      print_line(full_key)
+      print_line(prefix + full_key)
     }
   } else if is_config_novalue(value) {
-    // Value-less key: git outputs just the key (no =, no value)
     if null_terminator {
-      print_nul_terminated(full_key)
+      print_nul_terminated(prefix + full_key)
     } else {
-      print_line(full_key)
+      print_line(prefix + full_key)
     }
   } else if null_terminator {
-    print_nul_terminated(full_key + "\n" + value)
+    print_nul_terminated(prefix + full_key + "\n" + value)
   } else {
-    print_line(full_key + "=" + value)
+    print_line(prefix + full_key + "=" + value)
   }
 }
 
@@ -1599,7 +1992,8 @@ fn get_config_value(
   if not(fs.is_file(config_path)) {
     return None
   }
-  let content = decode_bytes(fs.read_file(config_path))
+  let raw_content = decode_bytes(fs.read_file(config_path))
+  let content = expand_config_includes(fs, config_path, raw_content)
   get_config_value_from_content(content, key, value_pattern, fixed_value)
 }
 
@@ -1718,7 +2112,8 @@ fn get_all_config_values(
   if not(fs.is_file(config_path)) {
     return []
   }
-  let content = decode_bytes(fs.read_file(config_path))
+  let raw_content = decode_bytes(fs.read_file(config_path))
+  let content = expand_config_includes(fs, config_path, raw_content)
   get_all_config_values_from_content(content, key, value_pattern, fixed_value)
 }
 
@@ -3294,14 +3689,26 @@ async fn get_regexp_config(
   get_int : Bool,
   name_only : Bool,
   null_terminator : Bool,
+  scope? : String = "",
+  origin? : String = "",
 ) -> Bool raise Error {
   if not(fs.is_file(config_path)) {
     return false
   }
-  let content = decode_bytes(fs.read_file(config_path))
+  let raw_content = decode_bytes(fs.read_file(config_path))
+  let content = expand_config_includes(fs, config_path, raw_content)
   get_regexp_config_from_content(
-    content, pattern, value_pattern, fixed_value, get_bool, get_int, name_only, null_terminator,
+    content,
+    pattern,
+    value_pattern,
+    fixed_value,
+    get_bool,
+    get_int,
+    name_only,
+    null_terminator,
     config_path,
+    scope~,
+    origin~,
   )
 }
 
@@ -3316,7 +3723,16 @@ async fn get_regexp_config_from_content(
   name_only : Bool,
   null_terminator : Bool,
   source_name : String,
+  scope? : String = "",
+  origin? : String = "",
 ) -> Bool raise Error {
+  let prefix = if origin.length() > 0 {
+    origin + "\t" + (if scope.length() > 0 { scope + "\t" } else { "" })
+  } else if scope.length() > 0 {
+    scope + "\t"
+  } else {
+    ""
+  }
   let lines = config_lines_from_content(content)
   let mut current_section = ""
   let mut current_subsection : String? = None
@@ -3370,22 +3786,22 @@ async fn get_regexp_config_from_content(
               found = true
               if name_only {
                 if null_terminator {
-                  print_nul_terminated(full_key)
+                  print_nul_terminated(prefix + full_key)
                 } else {
-                  print_line(full_key)
+                  print_line(prefix + full_key)
                 }
               } else if is_config_novalue(val) {
                 // Value-less key: --bool → "true", else just key name
                 if get_bool {
                   if null_terminator {
-                    print_nul_terminated(full_key + "\n" + "true")
+                    print_nul_terminated(prefix + full_key + "\n" + "true")
                   } else {
-                    print_line(full_key + " true")
+                    print_line(prefix + full_key + " true")
                   }
                 } else if null_terminator {
-                  print_nul_terminated(full_key)
+                  print_nul_terminated(prefix + full_key)
                 } else {
-                  print_line(full_key)
+                  print_line(prefix + full_key)
                 }
               } else {
                 let formatted = format_config_output_value(
@@ -3401,10 +3817,10 @@ async fn get_regexp_config_from_content(
                   (None : Int?),
                 )
                 if null_terminator {
-                  print_nul_terminated(full_key + "\n" + formatted)
+                  print_nul_terminated(prefix + full_key + "\n" + formatted)
                 } else {
                   // --get-regexp uses space separator (not =)
-                  print_line(full_key + " " + formatted)
+                  print_line(prefix + full_key + " " + formatted)
                 }
               }
             }
@@ -3615,6 +4031,239 @@ async fn print_nul_terminated(s : String) -> Unit {
   let zero : Byte = 0
   arr.push(zero)
   @stdio.stdout.write(bytes_from_array(arr))
+}
+
+///|
+/// Collect all remote.*.url values from config content (no include expansion).
+fn collect_remote_urls_from_content(content : String) -> Array[String] {
+  let lines = config_lines_from_content(content)
+  let urls : Array[String] = []
+  let mut in_remote = false
+  for line in lines {
+    let trimmed = trim_string(line)
+    if trimmed.length() == 0 || trimmed[0] == '#' || trimmed[0] == ';' {
+      continue
+    }
+    match parse_section_header_line(trimmed) {
+      Some((sec, _sub, _, _)) => in_remote = sec.to_lower() == "remote"
+      None =>
+        if in_remote {
+          let eq_idx = trimmed.find("=")
+          match eq_idx {
+            Some(idx) => {
+              let key_part = trim_chars(
+                String::unsafe_substring(trimmed, start=0, end=idx),
+                " \t",
+              )
+              if key_part.to_lower() == "url" {
+                let val = parse_config_value(
+                  String::unsafe_substring(
+                    trimmed,
+                    start=idx + 1,
+                    end=trimmed.length(),
+                  ),
+                )
+                urls.push(val)
+              }
+            }
+            None => ()
+          }
+        }
+    }
+  }
+  urls
+}
+
+///|
+/// Simple glob matching supporting * (single segment) and ** (multi segment).
+/// Segments are separated by '/'.
+fn glob_match_url(pattern : String, text : String) -> Bool {
+  glob_match_impl(pattern, 0, text, 0)
+}
+
+///|
+fn glob_match_impl(pat : String, pi : Int, text : String, ti : Int) -> Bool {
+  let plen = pat.length()
+  let tlen = text.length()
+  let mut pi = pi
+  let mut ti = ti
+  while pi < plen {
+    if pat[pi] == '*' && pi + 1 < plen && pat[pi + 1] == '*' {
+      // ** - match any number of path segments
+      pi += 2
+      // Skip trailing / after **
+      if pi < plen && pat[pi] == '/' {
+        pi += 1
+      }
+      // Try matching rest of pattern at every position
+      let mut k = ti
+      while k <= tlen {
+        if glob_match_impl(pat, pi, text, k) {
+          return true
+        }
+        if k < tlen {
+          k += 1
+        } else {
+          break
+        }
+      }
+      return false
+    } else if pat[pi] == '*' {
+      // * - match within single segment (no /)
+      pi += 1
+      let mut k = ti
+      while k <= tlen {
+        if glob_match_impl(pat, pi, text, k) {
+          return true
+        }
+        if k < tlen && text[k] == '/' {
+          break
+        }
+        if k < tlen {
+          k += 1
+        } else {
+          break
+        }
+      }
+      return false
+    } else {
+      if ti >= tlen || pat[pi] != text[ti] {
+        return false
+      }
+      pi += 1
+      ti += 1
+    }
+  }
+  ti >= tlen
+}
+
+///|
+/// Expand includeIf.hasconfig:remote.*.url directives in config content.
+/// Returns expanded content with included files inserted at the correct position.
+fn expand_config_includes(
+  fs : &@bitcore.RepoFileSystem,
+  config_path : String,
+  content : String,
+) -> String raise Error {
+  // First pass: collect remote URLs from main config (without expansion)
+  let remote_urls = collect_remote_urls_from_content(content)
+  // Second pass: process includes
+  let lines = config_lines_from_content(content)
+  let result : Array[String] = []
+  let mut current_section = ""
+  let mut include_condition : String? = None // None = no include, Some("") = unconditional, Some(pattern) = hasconfig
+  for line in lines {
+    let trimmed = trim_string(line)
+    match parse_section_header_line(trimmed) {
+      Some((sec, sub, _, _)) => {
+        let sec_l = sec.to_lower()
+        current_section = sec_l
+        // Check for include/includeIf
+        if sec_l == "include" {
+          include_condition = Some("") // unconditional include
+        } else if sec_l == "includeif" {
+          match sub {
+            Some(cond) =>
+              if cond.has_prefix("hasconfig:remote.") && cond.contains(".url:") {
+                include_condition = Some(cond)
+              } else {
+                include_condition = None
+              }
+            None => include_condition = None
+          }
+        } else {
+          include_condition = None
+        }
+        result.push(line)
+        continue
+      }
+      None => ()
+    }
+    if include_condition is Some(_) &&
+      (current_section == "include" || current_section == "includeif") {
+      // Parse path key
+      let eq_idx = trimmed.find("=")
+      match eq_idx {
+        Some(idx) => {
+          let key_part = trim_chars(
+            String::unsafe_substring(trimmed, start=0, end=idx),
+            " \t",
+          )
+          if key_part.to_lower() == "path" {
+            let path_val = parse_config_value(
+              String::unsafe_substring(
+                trimmed,
+                start=idx + 1,
+                end=trimmed.length(),
+              ),
+            )
+            // Resolve path relative to config file's directory
+            let resolved = if path_val.has_prefix("/") {
+              path_val
+            } else {
+              let dir = parent_dir(config_path)
+              if dir == "." || dir == "" {
+                path_val
+              } else {
+                dir + "/" + path_val
+              }
+            }
+            // Check condition
+            let should_include = match include_condition {
+              Some(cond) =>
+                if cond == "" {
+                  true // unconditional [include]
+                } else {
+                  // hasconfig:remote.*.url:PATTERN
+                  let url_pattern = match cond.find(".url:") {
+                    Some(colon_idx) => (try! cond[colon_idx + 5:]).to_string()
+                    None => ""
+                  }
+                  if url_pattern.length() > 0 {
+                    let mut matched = false
+                    for url in remote_urls {
+                      if glob_match_url(url_pattern, url) {
+                        matched = true
+                        break
+                      }
+                    }
+                    matched
+                  } else {
+                    false
+                  }
+                }
+              None => false
+            }
+            if should_include && fs.is_file(resolved) {
+              let inc_content = decode_bytes(fs.read_file(resolved))
+              // Validate: included files from hasconfig cannot contain remote URLs
+              match include_condition {
+                Some(cond) if cond != "" => {
+                  let inc_urls = collect_remote_urls_from_content(inc_content)
+                  if inc_urls.length() > 0 {
+                    raise @bitcore.GitError::IoError(
+                      "fatal: remote URLs cannot be configured in file directly or indirectly included by includeIf.hasconfig:remote.*.url",
+                    )
+                  }
+                }
+                _ => ()
+              }
+              // Insert included content
+              let inc_lines = config_lines_from_content(inc_content)
+              for inc_line in inc_lines {
+                result.push(inc_line)
+              }
+            }
+          }
+        }
+        None => ()
+      }
+      result.push(line)
+      continue
+    }
+    result.push(line)
+  }
+  result.join("\n")
 }
 
 ///|
