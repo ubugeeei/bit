@@ -188,6 +188,10 @@ async fn handle_tree(args : Array[String]) -> Unit raise Error {
       [],
       "",
       normalized_filters,
+      None,
+      false,
+      false,
+      None,
     )
   } catch {
     err => {

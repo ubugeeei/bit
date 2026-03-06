@@ -138,7 +138,8 @@ async fn handle_ls_tree(args : Array[String]) -> Unit raise Error {
   }
   print_tree_entries(
     db, fs, actual_tree_id, "", recursive, show_trees, only_trees, name_only, recurse_submodules,
-    root, submodules, display_cwd_prefix, normalized_filters,
+    root, submodules, display_cwd_prefix, normalized_filters, format_str, long_mode,
+    object_only, _abbrev,
   )
 }
 
@@ -177,6 +178,10 @@ async fn print_tree_entries(
   submodules : Array[SubmoduleInfo],
   cwd_prefix : String,
   path_filters : Array[String],
+  format_str : String?,
+  long_mode : Bool,
+  object_only : Bool,
+  abbrev : Int?,
 ) -> Unit raise Error {
   let obj = db.get(fs, tree_id)
   guard obj is Some(o) else {
@@ -266,6 +271,10 @@ async fn print_tree_entries(
           [], // No nested submodules for now
           cwd_prefix,
           path_filters,
+          format_str,
+          long_mode,
+          object_only,
+          abbrev,
         )
       }
       continue
@@ -283,20 +292,68 @@ async fn print_tree_entries(
     }
     if should_print {
       let display_path = make_display_path(path, cwd_prefix)
-      if name_only {
-        print_line(display_path)
+      let mode_str = if entry.mode == "40000" { "040000" } else { entry.mode }
+      let type_str = if is_tree {
+        "tree"
+      } else if is_submodule {
+        "commit"
       } else {
-        let mode_str = if entry.mode == "40000" { "040000" } else { entry.mode }
-        let type_str = if is_tree {
-          "tree"
-        } else if is_submodule {
-          "commit"
-        } else {
-          "blob"
+        "blob"
+      }
+      match format_str {
+        Some(fmt) => {
+          let obj_hex = entry.id.to_hex()
+          let abbrev_hex = match abbrev {
+            Some(n) => {
+              let len = if n < obj_hex.length() { n } else { obj_hex.length() }
+              (try! obj_hex[:len]).to_string()
+            }
+            None => obj_hex
+          }
+          let output = ls_tree_format_output(
+            fmt,
+            mode_str,
+            type_str,
+            obj_hex,
+            abbrev_hex,
+            display_path,
+            db,
+            fs,
+            entry.id,
+          )
+          print_line(output)
         }
-        print_line(
-          "\{mode_str} \{type_str} \{entry.id.to_hex()}\t\{display_path}",
-        )
+        None =>
+          if name_only {
+            print_line(display_path)
+          } else if object_only {
+            let obj_hex = entry.id.to_hex()
+            match abbrev {
+              Some(n) => {
+                let len = if n < obj_hex.length() {
+                  n
+                } else {
+                  obj_hex.length()
+                }
+                print_line((try! obj_hex[:len]).to_string())
+              }
+              None => print_line(obj_hex)
+            }
+          } else if long_mode {
+            let size = ls_tree_entry_size(
+              db,
+              fs,
+              entry.id,
+              is_tree || is_submodule,
+            )
+            print_line(
+              "\{mode_str} \{type_str} \{entry.id.to_hex()} \{size}\t\{display_path}",
+            )
+          } else {
+            print_line(
+              "\{mode_str} \{type_str} \{entry.id.to_hex()}\t\{display_path}",
+            )
+          }
       }
     }
     // Recurse if -r is set, or if we need to look deeper for path filters
@@ -318,8 +375,119 @@ async fn print_tree_entries(
         submodules,
         cwd_prefix,
         path_filters,
+        format_str,
+        long_mode,
+        object_only,
+        abbrev,
       )
     }
+  }
+}
+
+///|
+fn ls_tree_format_output(
+  fmt : String,
+  mode_str : String,
+  type_str : String,
+  _obj_hex : String,
+  abbrev_hex : String,
+  path : String,
+  db : @bitlib.ObjectDb,
+  fs : &@bitcore.RepoFileSystem,
+  id : @bitcore.ObjectId,
+) -> String raise Error {
+  let is_dir = type_str == "tree" || type_str == "commit"
+  let buf = StringBuilder::new()
+  let chars = fmt.to_array()
+  let mut i = 0
+  while i < chars.length() {
+    if chars[i] == '%' && i + 1 < chars.length() {
+      if chars[i + 1] == '(' {
+        // Find closing )
+        let mut end = i + 2
+        while end < chars.length() && chars[end] != ')' {
+          end += 1
+        }
+        if end < chars.length() {
+          let atom = String::unsafe_substring(fmt, start=i + 2, end~)
+          match atom {
+            "objectmode" => buf.write_string(mode_str)
+            "objecttype" => buf.write_string(type_str)
+            "objectname" => buf.write_string(abbrev_hex)
+            "objectsize" => {
+              let size = ls_tree_entry_size(db, fs, id, is_dir)
+              buf.write_string(size)
+            }
+            "objectsize:padded" => {
+              let size = ls_tree_entry_size(db, fs, id, is_dir)
+              // Right-justify in 7 chars
+              let padding = if size.length() < 7 {
+                7 - size.length()
+              } else {
+                0
+              }
+              for _ in 0..<padding {
+                buf.write_char(' ')
+              }
+              buf.write_string(size)
+            }
+            "path" => buf.write_string(path)
+            _ => {
+              buf.write_char('%')
+              buf.write_char('(')
+              buf.write_string(atom)
+              buf.write_char(')')
+            }
+          }
+          i = end + 1
+          continue
+        }
+      } else if chars[i + 1] == 'x' && i + 3 < chars.length() {
+        // %xNN hex escape
+        let h1 = chars[i + 2]
+        let h2 = chars[i + 3]
+        let val = hex_char_to_int(h1) * 16 + hex_char_to_int(h2)
+        buf.write_char(val.unsafe_to_char())
+        i += 4
+        continue
+      } else if chars[i + 1] == '%' {
+        buf.write_char('%')
+        i += 2
+        continue
+      }
+    }
+    buf.write_char(chars[i])
+    i += 1
+  }
+  buf.to_string()
+}
+
+///|
+fn ls_tree_entry_size(
+  db : @bitlib.ObjectDb,
+  fs : &@bitcore.RepoFileSystem,
+  id : @bitcore.ObjectId,
+  is_dir : Bool,
+) -> String raise Error {
+  if is_dir {
+    return "-"
+  }
+  match db.get(fs, id) {
+    Some(obj) => obj.data.length().to_string()
+    None => "-"
+  }
+}
+
+///|
+fn hex_char_to_int(c : Char) -> Int {
+  if c >= '0' && c <= '9' {
+    c.to_int() - '0'.to_int()
+  } else if c >= 'a' && c <= 'f' {
+    c.to_int() - 'a'.to_int() + 10
+  } else if c >= 'A' && c <= 'F' {
+    c.to_int() - 'A'.to_int() + 10
+  } else {
+    0
   }
 }
 
