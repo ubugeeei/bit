@@ -62,6 +62,9 @@ async fn handle_show_ref(args : Array[String]) -> Unit raise Error {
     if show_ref_exists_without_resolution(fs, git_dir, refname) {
       @sys.exit(0)
     } else {
+      if not(quiet) {
+        eprint_line("error: reference does not exist")
+      }
       @sys.exit(2)
     }
   }
@@ -205,8 +208,15 @@ fn show_ref_exists_without_resolution(
   git_dir : String,
   refname : String,
 ) -> Bool {
-  let normalized = if refname == "HEAD" {
-    "HEAD"
+  // Accept HEAD and special refs (FETCH_HEAD, ORIG_HEAD, etc.)
+  let normalized = if refname == "HEAD" ||
+    refname == "FETCH_HEAD" ||
+    refname == "ORIG_HEAD" ||
+    refname == "MERGE_HEAD" ||
+    refname == "CHERRY_PICK_HEAD" ||
+    refname == "REVERT_HEAD" ||
+    refname == "BISECT_HEAD" {
+    refname
   } else {
     let normalized = @bitlib.normalize_repo_path(refname) catch {
       _ => return false

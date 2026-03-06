@@ -112,7 +112,17 @@ async fn handle_ls_tree(args : Array[String]) -> Unit raise Error {
     path_filters.push(positional[i])
   }
   let cwd_prefix = compute_cwd_prefix(root)
-  let normalized_filters = normalize_ls_tree_filters(path_filters, cwd_prefix)
+  // --full-tree: ignore cwd_prefix entirely (show from repo root)
+  let effective_cwd_prefix = if _full_tree { "" } else { cwd_prefix }
+  let normalized_filters = normalize_ls_tree_filters(
+    path_filters, effective_cwd_prefix,
+  )
+  // --full-name or --full-tree: display paths from repo root
+  let display_cwd_prefix = if _full_name || _full_tree {
+    ""
+  } else {
+    effective_cwd_prefix
+  }
   let tree_id = @bitrepo.rev_parse(fs, git_dir, spec)
   guard tree_id is Some(tid) else {
     raise @bitcore.GitError::InvalidObject("Not a valid object name: \{spec}")
@@ -128,7 +138,7 @@ async fn handle_ls_tree(args : Array[String]) -> Unit raise Error {
   }
   print_tree_entries(
     db, fs, actual_tree_id, "", recursive, show_trees, only_trees, name_only, recurse_submodules,
-    root, submodules, cwd_prefix, normalized_filters,
+    root, submodules, display_cwd_prefix, normalized_filters,
   )
 }
 
@@ -189,12 +199,28 @@ async fn print_tree_entries(
       let mut match_found = false
       let mut recurse_needed = false
       for filter in path_filters {
-        if path == filter || path.has_prefix(filter + "/") {
-          match_found = true
-        }
-        // Filter is under the entry path (need to recurse into this tree to find it)
-        if filter.has_prefix(path + "/") {
-          recurse_needed = true
+        if filter.has_suffix("/") {
+          // Trailing slash: only match contents inside the directory
+          let filter_base = String::unsafe_substring(
+            filter,
+            start=0,
+            end=filter.length() - 1,
+          )
+          if path.has_prefix(filter_base + "/") {
+            match_found = true
+          }
+          // Need to recurse into this tree to reach the filter target
+          if filter_base == path || filter_base.has_prefix(path + "/") {
+            recurse_needed = true
+          }
+        } else {
+          if path == filter || path.has_prefix(filter + "/") {
+            match_found = true
+          }
+          // Filter is under the entry path (need to recurse into this tree to find it)
+          if filter.has_prefix(path + "/") {
+            recurse_needed = true
+          }
         }
       }
       (match_found, recurse_needed)

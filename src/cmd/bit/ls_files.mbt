@@ -428,7 +428,9 @@ fn normalize_ls_tree_filters(
       )
     }
     let mut clean = raw
-    if clean.has_suffix("/") && clean.length() > 1 {
+    // Preserve trailing slash semantics: path/ means "contents of directory"
+    let has_trailing_slash = clean.has_suffix("/") && clean.length() > 1
+    if has_trailing_slash {
       clean = String::unsafe_substring(clean, start=0, end=clean.length() - 1)
     }
     let base = if clean == "" || clean == "." {
@@ -442,7 +444,12 @@ fn normalize_ls_tree_filters(
     }
     let normalized = normalize_path(base)
     if normalized != "." && normalized.length() > 0 {
-      out.push(normalized)
+      // Re-append trailing slash to preserve semantics
+      if has_trailing_slash {
+        out.push(normalized + "/")
+      } else {
+        out.push(normalized)
+      }
     }
   }
   out
