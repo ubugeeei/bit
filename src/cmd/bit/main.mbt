@@ -1059,6 +1059,7 @@ async fn dispatch_known_command(
     "ls-tree" => handle_ls_tree(rest)
     "write-tree" => handle_write_tree(rest)
     "show-ref" => handle_show_ref(rest)
+    "for-each-ref" => handle_for_each_ref(rest)
     "update-ref" => handle_update_ref(rest)
     "symbolic-ref" => handle_symbolic_ref(rest)
     "reflog" => handle_reflog(rest)

@@ -86,6 +86,7 @@ options(
     "fetch_serve_js.mbt": [ "js" ],
     "fetch_serve_native.mbt": [ "native" ],
     "fetch_wbtest.mbt": [ "native" ],
+    "for_each_ref.mbt": [ "native" ],
     "format_patch.mbt": [ "native" ],
     "fsck.mbt": [ "native" ],
     "gc.mbt": [ "native" ],

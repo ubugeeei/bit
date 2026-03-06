@@ -71,20 +71,512 @@ fn log_should_use_storage_runtime(args : Array[String]) -> Bool {
 }
 
 ///|
-fn format_log_oneline(
-  fmt : String,
+struct CommitFormatData {
+  id : @bitcore.ObjectId
+  tree : @bitcore.ObjectId
+  parents : Array[@bitcore.ObjectId]
+  author_name : String
+  author_email : String
+  author_timestamp : Int64
+  author_tz : String
+  committer_name : String
+  committer_email : String
+  committer_timestamp : Int64
+  committer_tz : String
+  subject : String
+  body : String
+  message : String
+  ref_names : Map[String, Array[String]]
+  date_format : String
+}
+
+///|
+fn parse_commit_format_data(
   id : @bitcore.ObjectId,
-  subject : String,
-) -> String {
-  let short = (try! id.to_hex()[:7]).to_string()
-  match fmt {
-    "%h %s" => short + " " + subject
-    "%h" => short
-    "%H" => id.to_hex()
-    "%H %s" => id.to_hex() + " " + subject
-    "%s" => subject
-    _ => short + " " + subject
+  data : Bytes,
+  tree : @bitcore.ObjectId,
+  parents : Array[@bitcore.ObjectId],
+  ref_names : Map[String, Array[String]],
+  date_format? : String = "",
+) -> CommitFormatData {
+  let text = decode_bytes(data)
+  let mut author_name = ""
+  let mut author_email = ""
+  let mut author_timestamp = 0L
+  let mut author_tz = "+0000"
+  let mut committer_name = ""
+  let mut committer_email = ""
+  let mut committer_timestamp = 0L
+  let mut committer_tz = "+0000"
+  let mut in_message = false
+  let message_lines : Array[String] = []
+  for line_view in text.split("\n") {
+    let line = line_view.to_string()
+    if in_message {
+      message_lines.push(line)
+      continue
+    }
+    if line.length() == 0 {
+      in_message = true
+      continue
+    }
+    if line.has_prefix("author ") {
+      let rest = String::unsafe_substring(line, start=7, end=line.length())
+      let (name, email, ts, tz) = parse_ident_parts(rest)
+      author_name = name
+      author_email = email
+      author_timestamp = ts
+      author_tz = tz
+    } else if line.has_prefix("committer ") {
+      let rest = String::unsafe_substring(line, start=10, end=line.length())
+      let (name, email, ts, tz) = parse_ident_parts(rest)
+      committer_name = name
+      committer_email = email
+      committer_timestamp = ts
+      committer_tz = tz
+    }
   }
+  // Remove trailing empty lines from message
+  while message_lines.length() > 0 &&
+        message_lines[message_lines.length() - 1].length() == 0 {
+    ignore(message_lines.pop())
+  }
+  let subject = if message_lines.length() > 0 { message_lines[0] } else { "" }
+  let body_lines : Array[String] = []
+  if message_lines.length() > 1 {
+    // Skip the subject and blank line after it
+    let mut start = 1
+    while start < message_lines.length() && message_lines[start].length() == 0 {
+      start += 1
+    }
+    for i = start; i < message_lines.length(); i = i + 1 {
+      body_lines.push(message_lines[i])
+    }
+  }
+  let body = if body_lines.length() > 0 {
+    body_lines.join("\n") + "\n"
+  } else {
+    ""
+  }
+  let message = if message_lines.length() > 0 {
+    message_lines.join("\n") + "\n"
+  } else {
+    ""
+  }
+  {
+    id,
+    tree,
+    parents,
+    author_name,
+    author_email,
+    author_timestamp,
+    author_tz,
+    committer_name,
+    committer_email,
+    committer_timestamp,
+    committer_tz,
+    subject,
+    body,
+    message,
+    ref_names,
+    date_format,
+  }
+}
+
+///|
+fn log_extract_author_tz(author : String) -> String {
+  // author is "Name <email> timestamp tz" or just "Name <email>"
+  // Extract tz (last token after last space)
+  match author.rev_find(" ") {
+    Some(idx) => {
+      let last = String::unsafe_substring(
+        author,
+        start=idx + 1,
+        end=author.length(),
+      )
+      if last.length() >= 4 && (last.has_prefix("+") || last.has_prefix("-")) {
+        last
+      } else {
+        "+0000"
+      }
+    }
+    None => "+0000"
+  }
+}
+
+///|
+fn parse_ident_parts(ident : String) -> (String, String, Int64, String) {
+  // Format: "Name <email> timestamp timezone"
+  let mut name = ""
+  let mut email = ""
+  let mut ts = 0L
+  let mut tz = "+0000"
+  match ident.find("<") {
+    Some(lt) => {
+      name = String::unsafe_substring(ident, start=0, end=lt).trim().to_string()
+      match ident.find(">") {
+        Some(gt) => {
+          email = String::unsafe_substring(ident, start=lt + 1, end=gt)
+          let rest = String::unsafe_substring(
+              ident,
+              start=gt + 1,
+              end=ident.length(),
+            )
+            .trim()
+            .to_string()
+          // rest = "timestamp timezone"
+          let parts : Array[String] = []
+          for p in rest.split(" ") {
+            let s = p.to_string().trim().to_string()
+            if s.length() > 0 {
+              parts.push(s)
+            }
+          }
+          if parts.length() >= 1 {
+            ts = @strconv.parse_int64(parts[0]) catch { _ => 0L }
+          }
+          if parts.length() >= 2 {
+            tz = parts[1]
+          }
+        }
+        None => ()
+      }
+    }
+    None => name = ident
+  }
+  (name, email, ts, tz)
+}
+
+///|
+fn format_commit_string(fmt : String, data : CommitFormatData) -> String {
+  let out = StringBuilder::new()
+  let chars = fmt.to_array()
+  let len = chars.length()
+  let mut i = 0
+  while i < len {
+    if chars[i] == '%' && i + 1 < len {
+      let next = chars[i + 1]
+      match next {
+        'H' => {
+          out.write_string(data.id.to_hex())
+          i += 2
+        }
+        'h' => {
+          out.write_string((try! data.id.to_hex()[:7]).to_string())
+          i += 2
+        }
+        'T' => {
+          out.write_string(data.tree.to_hex())
+          i += 2
+        }
+        't' => {
+          out.write_string((try! data.tree.to_hex()[:7]).to_string())
+          i += 2
+        }
+        'P' => {
+          let parent_hexes = data.parents.map(fn(p) { p.to_hex() })
+          out.write_string(parent_hexes.join(" "))
+          i += 2
+        }
+        'p' => {
+          let parent_shorts = data.parents.map(fn(p) {
+            (try! p.to_hex()[:7]).to_string()
+          })
+          out.write_string(parent_shorts.join(" "))
+          i += 2
+        }
+        'a' if i + 2 < len => {
+          let spec = chars[i + 2]
+          match spec {
+            'n' => {
+              out.write_string(data.author_name)
+              i += 3
+            }
+            'e' => {
+              out.write_string(data.author_email)
+              i += 3
+            }
+            't' => {
+              out.write_string(data.author_timestamp.to_string())
+              i += 3
+            }
+            'i' => {
+              out.write_string(
+                format_timestamp_iso(data.author_timestamp, data.author_tz),
+              )
+              i += 3
+            }
+            'd' => {
+              out.write_string(
+                format_date_by_mode(
+                  data.author_timestamp,
+                  data.author_tz,
+                  data.date_format,
+                ),
+              )
+              i += 3
+            }
+            'D' => {
+              out.write_string(
+                format_timestamp_rfc2822(data.author_timestamp, data.author_tz),
+              )
+              i += 3
+            }
+            _ => {
+              out.write_char('%')
+              out.write_char('a')
+              i += 2
+            }
+          }
+        }
+        'c' if i + 2 < len => {
+          let spec = chars[i + 2]
+          match spec {
+            'n' => {
+              out.write_string(data.committer_name)
+              i += 3
+            }
+            'e' => {
+              out.write_string(data.committer_email)
+              i += 3
+            }
+            't' => {
+              out.write_string(data.committer_timestamp.to_string())
+              i += 3
+            }
+            'i' => {
+              out.write_string(
+                format_timestamp_iso(
+                  data.committer_timestamp,
+                  data.committer_tz,
+                ),
+              )
+              i += 3
+            }
+            'd' => {
+              out.write_string(
+                format_date_by_mode(
+                  data.committer_timestamp,
+                  data.committer_tz,
+                  data.date_format,
+                ),
+              )
+              i += 3
+            }
+            'D' => {
+              out.write_string(
+                format_timestamp_rfc2822(
+                  data.committer_timestamp,
+                  data.committer_tz,
+                ),
+              )
+              i += 3
+            }
+            _ => {
+              out.write_char('%')
+              out.write_char('c')
+              i += 2
+            }
+          }
+        }
+        's' => {
+          out.write_string(data.subject)
+          i += 2
+        }
+        'b' => {
+          out.write_string(data.body)
+          i += 2
+        }
+        'B' => {
+          out.write_string(data.message)
+          i += 2
+        }
+        'n' => {
+          out.write_char('\n')
+          i += 2
+        }
+        '%' => {
+          out.write_char('%')
+          i += 2
+        }
+        'd' => {
+          // Decoration with parens
+          let hex = data.id.to_hex()
+          match data.ref_names.get(hex) {
+            Some(names) if names.length() > 0 =>
+              out.write_string(" (" + names.join(", ") + ")")
+            _ => ()
+          }
+          i += 2
+        }
+        'D' => {
+          // Decoration without parens
+          let hex = data.id.to_hex()
+          match data.ref_names.get(hex) {
+            Some(names) if names.length() > 0 =>
+              out.write_string(names.join(", "))
+            _ => ()
+          }
+          i += 2
+        }
+        _ => {
+          out.write_char('%')
+          out.write_char(next)
+          i += 2
+        }
+      }
+    } else {
+      out.write_char(chars[i])
+      i += 1
+    }
+  }
+  out.to_string()
+}
+
+///|
+fn format_date_by_mode(ts : Int64, tz : String, mode : String) -> String {
+  match mode {
+    "iso" | "iso8601" => format_timestamp_iso(ts, tz)
+    "iso-strict" | "iso8601-strict" => format_timestamp_iso_strict(ts, tz)
+    "rfc" | "rfc2822" => format_timestamp_rfc2822(ts, tz)
+    "short" => format_timestamp_short(ts, tz)
+    "raw" => ts.to_string() + " " + tz
+    "unix" => ts.to_string()
+    "default" | "" => format_timestamp_default(ts, tz)
+    _ => format_timestamp_default(ts, tz)
+  }
+}
+
+///|
+fn format_timestamp_default(ts : Int64, tz : String) -> String {
+  let (year, month, day, hour, minute, second) = epoch_to_calendar(ts, tz)
+  let dow = day_of_week(year, month, day)
+  let dow_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+  let month_names = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
+    "Dec",
+  ]
+  let dn = dow_names[dow]
+  let mn = month_names[month - 1]
+  "\{dn} \{mn} \{day} \{pad2(hour)}:\{pad2(minute)}:\{pad2(second)} \{year} \{tz}"
+}
+
+///|
+fn format_timestamp_short(ts : Int64, tz : String) -> String {
+  let (year, month, day, _, _, _) = epoch_to_calendar(ts, tz)
+  "\{year}-\{pad2(month)}-\{pad2(day)}"
+}
+
+///|
+fn format_timestamp_iso_strict(ts : Int64, tz : String) -> String {
+  let (year, month, day, hour, minute, second) = epoch_to_calendar(ts, tz)
+  let tz_formatted = if tz.length() >= 5 {
+    String::unsafe_substring(tz, start=0, end=3) +
+    ":" +
+    String::unsafe_substring(tz, start=3, end=5)
+  } else {
+    tz
+  }
+  "\{year}-\{pad2(month)}-\{pad2(day)}T\{pad2(hour)}:\{pad2(minute)}:\{pad2(second)}\{tz_formatted}"
+}
+
+///|
+fn format_timestamp_iso(ts : Int64, tz : String) -> String {
+  let (year, month, day, hour, minute, second) = epoch_to_calendar(ts, tz)
+  let y = year.to_string()
+  let mo = pad2(month)
+  let d = pad2(day)
+  let h = pad2(hour)
+  let mi = pad2(minute)
+  let s = pad2(second)
+  "\{y}-\{mo}-\{d} \{h}:\{mi}:\{s} \{tz}"
+}
+
+///|
+fn format_timestamp_rfc2822(ts : Int64, tz : String) -> String {
+  let (year, month, day, hour, minute, second) = epoch_to_calendar(ts, tz)
+  let dow = day_of_week(year, month, day)
+  let dow_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+  let month_names = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
+    "Dec",
+  ]
+  let dn = dow_names[dow]
+  let mn = month_names[month - 1]
+  let d = pad2(day)
+  let y = year.to_string()
+  let h = pad2(hour)
+  let mi = pad2(minute)
+  let s = pad2(second)
+  "\{dn}, \{d} \{mn} \{y} \{h}:\{mi}:\{s} \{tz}"
+}
+
+///|
+fn pad2(n : Int) -> String {
+  if n < 10 {
+    "0" + n.to_string()
+  } else {
+    n.to_string()
+  }
+}
+
+///|
+fn epoch_to_calendar(ts : Int64, tz : String) -> (Int, Int, Int, Int, Int, Int) {
+  // Parse timezone offset
+  let tz_offset_seconds = parse_tz_offset(tz)
+  let adjusted = ts + tz_offset_seconds.to_int64()
+  // Convert epoch seconds to y/m/d h:m:s
+  let mut days = (adjusted / 86400L).to_int()
+  let mut remaining = (adjusted % 86400L).to_int()
+  if remaining < 0 {
+    days -= 1
+    remaining += 86400
+  }
+  let hour = remaining / 3600
+  remaining = remaining % 3600
+  let minute = remaining / 60
+  let second = remaining % 60
+  // Days since 1970-01-01
+  let (year, month, day) = log_days_to_date(days)
+  (year, month, day, hour, minute, second)
+}
+
+///|
+fn parse_tz_offset(tz : String) -> Int {
+  if tz.length() < 5 {
+    return 0
+  }
+  let chars = tz.to_array()
+  let sign = if chars[0] == '-' { -1 } else { 1 }
+  let h = (chars[1].to_int() - '0'.to_int()) * 10 +
+    (chars[2].to_int() - '0'.to_int())
+  let m = (chars[3].to_int() - '0'.to_int()) * 10 +
+    (chars[4].to_int() - '0'.to_int())
+  sign * (h * 3600 + m * 60)
+}
+
+///|
+fn log_days_to_date(days_since_epoch : Int) -> (Int, Int, Int) {
+  // Algorithm from http://howardhinnant.github.io/date_algorithms.html
+  let z = days_since_epoch + 719468
+  let era = (if z >= 0 { z } else { z - 146096 }) / 146097
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let y = yoe + era * 400
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let d = doy - (153 * mp + 2) / 5 + 1
+  let m = mp + (if mp < 10 { 3 } else { -9 })
+  let year = y + (if m <= 2 { 1 } else { 0 })
+  (year, m, d)
+}
+
+///|
+fn day_of_week(year : Int, month : Int, day : Int) -> Int {
+  // Tomohiko Sakamoto's algorithm (0=Sunday)
+  let t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
+  let y = if month < 3 { year - 1 } else { year }
+  (y + y / 4 - y / 100 + y / 400 + t[month - 1] + day) % 7
 }
 
 ///|
@@ -209,6 +701,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
   let mut walk_reflogs = false
   let mut reverse = false
   let mut first_parent = false
+  let mut date_format = ""
   let mut format : String? = None
   let revs : Array[String] = []
   let range_excludes : Array[String] = []
@@ -280,6 +773,11 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
       }
       "--reverse" => reverse = true
       "--first-parent" => first_parent = true
+      "--date" if i + 1 < args.length() => {
+        date_format = args[i + 1]
+        i += 1
+      }
+      _ if arg.has_prefix("--date=") => date_format = (try! arg[7:]).to_string()
       _ if arg.has_prefix("-") => warn_unimplemented_arg("log", arg)
       _ => {
         // Detect A..B range (but not A...B)
@@ -336,8 +834,19 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     }
     return
   }
-  if format is Some(fmt) {
+  if format is Some(raw_fmt) {
+    // Strip tformat:/format: prefix
+    let (actual_fmt, is_tformat) = if raw_fmt.has_prefix("tformat:") {
+      ((try! raw_fmt[8:]).to_string(), true)
+    } else if raw_fmt.has_prefix("format:") {
+      ((try! raw_fmt[7:]).to_string(), false)
+    } else if raw_fmt == "oneline" {
+      ("%h %s", true)
+    } else {
+      (raw_fmt, true)
+    }
     let db = @bitlib.ObjectDb::load(rfs, git_dir)
+    let ref_names_map : Map[String, Array[String]] = {}
     let targets : Array[(String, @bitcore.ObjectId)] = []
     if all_refs || no_walk {
       let refs = @bitlib.list_refs_with_ids(rfs, git_dir, None)
@@ -370,8 +879,23 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         continue
       }
       seen[hex] = true
-      let subject = get_commit_subject(db, rfs, id)
-      print_line(format_log_oneline(fmt, id, subject))
+      let obj = db.get(rfs, id)
+      guard obj is Some(o) else { continue }
+      let info = @bitcore.parse_commit(o.data)
+      let commit_data = parse_commit_format_data(
+        id,
+        o.data,
+        info.tree,
+        info.parents,
+        ref_names_map,
+        date_format~,
+      )
+      let line = format_commit_string(actual_fmt, commit_data)
+      if is_tformat {
+        print_line(line)
+      } else {
+        print_str(line)
+      }
       emitted += 1
     }
     return
@@ -501,6 +1025,12 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         let deco = format_decoration(ref_names, entry.id.to_hex())
         print_line("commit " + entry.id.to_hex() + deco)
         print_line("Author: " + entry.author)
+        let date_str = format_date_by_mode(
+          entry.timestamp,
+          log_extract_author_tz(entry.author),
+          date_format,
+        )
+        print_line("Date:   " + date_str)
         print_line("")
         print_line("    " + entry.message)
         print_line("")
@@ -559,6 +1089,12 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     for entry in entries {
       print_line("commit " + entry.id.to_hex())
       print_line("Author: " + entry.author)
+      let date_str = format_date_by_mode(
+        entry.timestamp,
+        log_extract_author_tz(entry.author),
+        date_format,
+      )
+      print_line("Date:   " + date_str)
       print_line("")
       print_line("    " + entry.message)
       print_line("")

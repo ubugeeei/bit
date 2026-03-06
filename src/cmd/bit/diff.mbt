@@ -104,6 +104,8 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
   let mut name_status = false
   let mut quiet = false
   let mut exit_code = false
+  let mut context_lines = 3
+  let mut no_index = false
   let mut parse_options = true
   let mut ref_target : String? = None
   let paths : Array[String] = []
@@ -126,8 +128,17 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
           exit_code = true
         }
         "--exit-code" => exit_code = true
+        "--no-index" => no_index = true
         "--submodule" => ()
         _ if arg.has_prefix("--submodule=") => ()
+        _ if arg.has_prefix("-U") && arg.length() > 2 => {
+          let num_str = (try! arg[2:]).to_string()
+          context_lines = @strconv.parse_int(num_str)
+        }
+        _ if arg.has_prefix("--unified=") => {
+          let num_str = (try! arg[10:]).to_string()
+          context_lines = @strconv.parse_int(num_str)
+        }
         _ if not(arg.has_prefix("-")) =>
           if arg.contains("^!") || arg.contains("..") {
             if range_spec is None {
@@ -159,6 +170,45 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
     } else {
       paths.push(arg)
     }
+  }
+  // Handle --no-index: compare two files/directories without git context
+  if no_index {
+    if paths.length() < 2 {
+      raise @bitcore.GitError::InvalidObject(
+        "diff --no-index requires two paths",
+      )
+    }
+    let files = diff_no_index(fs, paths[0], paths[1])
+    if not(quiet) {
+      if name_only {
+        for f in files {
+          print_line(f.path)
+        }
+      } else if name_status {
+        for f in files {
+          let status = match f.kind {
+            @bitdiff.DiffKind::Added => "A"
+            @bitdiff.DiffKind::Modified => "M"
+            @bitdiff.DiffKind::Deleted => "D"
+          }
+          print_line("\{status}\t\{f.path}")
+        }
+      } else if stat_mode {
+        let lines = @bitdiff.diff_stat(files)
+        for line in lines {
+          print_line(line)
+        }
+      } else {
+        let lines = @bitdiff.diff_text(files, context_lines~)
+        for line in lines {
+          print_line(line)
+        }
+      }
+    }
+    if files.length() > 0 {
+      @sys.exit(1)
+    }
+    return
   }
   // Handle subdir-clone diff with upstream ref
   match (ref_target, get_subdir_info(fs, git_dir)) {
@@ -255,7 +305,7 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
         print_line(line)
       }
     } else {
-      let lines = @bitdiff.diff_text(files)
+      let lines = @bitdiff.diff_text(files, context_lines~)
       for line in lines {
         print_line(line)
       }
@@ -774,6 +824,163 @@ fn resolve_submodule_git_dir_candidates(
     candidates.push(common_modules)
   }
   candidates
+}
+
+///|
+fn diff_no_index(
+  fs : OsFs,
+  path_a : String,
+  path_b : String,
+) -> Array[@bitdiff.DiffFile] raise Error {
+  let out : Array[@bitdiff.DiffFile] = []
+  let a_is_file = fs.is_file(path_a)
+  let b_is_file = fs.is_file(path_b)
+  if a_is_file && b_is_file {
+    diff_no_index_file(fs, out, path_a, path_b, path_a, path_b)
+  } else if fs.is_dir(path_a) && fs.is_dir(path_b) {
+    diff_no_index_dirs(fs, out, path_a, path_b, path_a, path_b)
+  } else if a_is_file && fs.is_dir(path_b) {
+    // Compare file against same-named file in directory
+    let basename = match path_a.rev_find("/") {
+      Some(idx) =>
+        String::unsafe_substring(path_a, start=idx + 1, end=path_a.length())
+      None => path_a
+    }
+    let target = path_b + "/" + basename
+    if fs.is_file(target) {
+      diff_no_index_file(fs, out, path_a, target, path_a, target)
+    }
+  } else if fs.is_dir(path_a) && b_is_file {
+    let basename = match path_b.rev_find("/") {
+      Some(idx) =>
+        String::unsafe_substring(path_b, start=idx + 1, end=path_b.length())
+      None => path_b
+    }
+    let target = path_a + "/" + basename
+    if fs.is_file(target) {
+      diff_no_index_file(fs, out, target, path_b, target, path_b)
+    }
+  } else if path_a == "/dev/null" && b_is_file {
+    let content = fs.read_file(path_b)
+    out.push({
+      path: path_b,
+      kind: @bitdiff.DiffKind::Added,
+      old_content: None,
+      new_content: Some(content),
+      old_mode: None,
+      new_mode: Some(0o100644),
+    })
+  } else if a_is_file && path_b == "/dev/null" {
+    let content = fs.read_file(path_a)
+    out.push({
+      path: path_a,
+      kind: @bitdiff.DiffKind::Deleted,
+      old_content: Some(content),
+      new_content: None,
+      old_mode: Some(0o100644),
+      new_mode: None,
+    })
+  }
+  out
+}
+
+///|
+fn diff_no_index_file(
+  fs : OsFs,
+  out : Array[@bitdiff.DiffFile],
+  abs_a : String,
+  abs_b : String,
+  display_a : String,
+  display_b : String,
+) -> Unit raise Error {
+  let content_a = fs.read_file(abs_a)
+  let content_b = fs.read_file(abs_b)
+  let id_a = @bitcore.hash_blob(content_a)
+  let id_b = @bitcore.hash_blob(content_b)
+  if id_a != id_b {
+    // Use display_b as the canonical path for diff header
+    let path = if display_a == display_b { display_a } else { display_b }
+    out.push({
+      path,
+      kind: @bitdiff.DiffKind::Modified,
+      old_content: Some(content_a),
+      new_content: Some(content_b),
+      old_mode: Some(0o100644),
+      new_mode: Some(0o100644),
+    })
+  }
+}
+
+///|
+fn diff_no_index_dirs(
+  fs : OsFs,
+  out : Array[@bitdiff.DiffFile],
+  dir_a : String,
+  dir_b : String,
+  base_a : String,
+  base_b : String,
+) -> Unit raise Error {
+  let items_a = fs.readdir(dir_a) catch { _ => [] }
+  let items_b = fs.readdir(dir_b) catch { _ => [] }
+  let set_a : Map[String, Bool] = {}
+  let set_b : Map[String, Bool] = {}
+  let all_names : Array[String] = []
+  for name in items_a {
+    if name == "." || name == ".." || name == ".git" {
+      continue
+    }
+    set_a[name] = true
+    all_names.push(name)
+  }
+  for name in items_b {
+    if name == "." || name == ".." || name == ".git" {
+      continue
+    }
+    set_b[name] = true
+    if not(set_a.contains(name)) {
+      all_names.push(name)
+    }
+  }
+  all_names.sort()
+  for name in all_names {
+    let path_a = dir_a + "/" + name
+    let path_b = dir_b + "/" + name
+    let rel_a = base_a + "/" + name
+    let rel_b = base_b + "/" + name
+    let in_a = set_a.contains(name)
+    let in_b = set_b.contains(name)
+    if in_a && in_b {
+      if fs.is_file(path_a) && fs.is_file(path_b) {
+        diff_no_index_file(fs, out, path_a, path_b, rel_a, rel_b)
+      } else if fs.is_dir(path_a) && fs.is_dir(path_b) {
+        diff_no_index_dirs(fs, out, path_a, path_b, rel_a, rel_b)
+      }
+    } else if in_a && not(in_b) {
+      if fs.is_file(path_a) {
+        let content = fs.read_file(path_a)
+        out.push({
+          path: rel_a,
+          kind: @bitdiff.DiffKind::Deleted,
+          old_content: Some(content),
+          new_content: None,
+          old_mode: Some(0o100644),
+          new_mode: None,
+        })
+      }
+    } else if not(in_a) && in_b {
+      if fs.is_file(path_b) {
+        let content = fs.read_file(path_b)
+        out.push({
+          path: rel_b,
+          kind: @bitdiff.DiffKind::Added,
+          old_content: None,
+          new_content: Some(content),
+          old_mode: None,
+          new_mode: Some(0o100644),
+        })
+      }
+    }
+  }
 }
 
 ///|

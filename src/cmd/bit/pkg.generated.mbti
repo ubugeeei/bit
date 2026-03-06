@@ -75,6 +75,8 @@ type CatFilePathAttrs
 
 type CherryPickResult
 
+type CommitFormatData
+
 type DenyCurrentBranchDecision
 
 type FetchHeadEntry

@@ -1,14 +1,14 @@
 ///| Git diff helpers (extracted package)
 
 ///|
-pub enum DiffKind {
+pub(all) enum DiffKind {
   Added
   Modified
   Deleted
 }
 
 ///|
-pub struct DiffFile {
+pub(all) struct DiffFile {
   path : String
   kind : DiffKind
   old_content : Bytes?
@@ -270,7 +270,10 @@ pub fn diff_index(
 
 ///|
 /// Format diff as unified text.
-pub fn diff_text(files : Array[DiffFile]) -> Array[String] {
+pub fn diff_text(
+  files : Array[DiffFile],
+  context_lines? : Int = 3,
+) -> Array[String] {
   let lines : Array[String] = []
   for f in files {
     lines.push("diff --git a/\{f.path} b/\{f.path}")
@@ -280,13 +283,13 @@ pub fn diff_text(files : Array[DiffFile]) -> Array[String] {
         diff_emit_index_line(lines, None, f.new_content, None)
         lines.push("--- /dev/null")
         lines.push("+++ b/\{f.path}")
-        diff_emit_unified_hunk(lines, None, f.new_content)
+        diff_emit_unified_hunks(lines, None, f.new_content, context_lines)
       }
       DiffKind::Deleted => {
         diff_emit_index_line(lines, f.old_content, None, None)
         lines.push("--- a/\{f.path}")
         lines.push("+++ /dev/null")
-        diff_emit_unified_hunk(lines, f.old_content, None)
+        diff_emit_unified_hunks(lines, f.old_content, None, context_lines)
       }
       DiffKind::Modified => {
         let mode = match (f.old_mode, f.new_mode) {
@@ -296,7 +299,12 @@ pub fn diff_text(files : Array[DiffFile]) -> Array[String] {
         diff_emit_index_line(lines, f.old_content, f.new_content, mode)
         lines.push("--- a/\{f.path}")
         lines.push("+++ b/\{f.path}")
-        diff_emit_unified_hunk(lines, f.old_content, f.new_content)
+        diff_emit_unified_hunks(
+          lines,
+          f.old_content,
+          f.new_content,
+          context_lines,
+        )
       }
     }
   }
@@ -346,10 +354,99 @@ fn diff_emit_index_line(
 }
 
 ///|
-fn diff_emit_unified_hunk(
+priv enum DiffEditOp {
+  Keep(Int, Int) // old_idx, new_idx
+  Delete(Int) // old_idx
+  Insert(Int) // new_idx
+}
+
+///|
+fn diff_myers(old : Array[String], new : Array[String]) -> Array[DiffEditOp] {
+  let n = old.length()
+  let m = new.length()
+  if n == 0 && m == 0 {
+    return []
+  }
+  if n == 0 {
+    return Array::makei(m, fn(j) { DiffEditOp::Insert(j) })
+  }
+  if m == 0 {
+    return Array::makei(n, fn(i) { DiffEditOp::Delete(i) })
+  }
+  let max = n + m
+  let size = 2 * max + 1
+  let v : Array[Int] = Array::make(size, 0)
+  let traces : Array[Array[Int]] = []
+  let mut found = false
+  let mut final_d = 0
+  for d = 0; d <= max; d = d + 1 {
+    traces.push(v.copy())
+    for k = -d; k <= d; k = k + 2 {
+      let idx = k + max
+      let mut x = if k == -d || (k != d && v[idx - 1] < v[idx + 1]) {
+        v[idx + 1]
+      } else {
+        v[idx - 1] + 1
+      }
+      let mut y = x - k
+      while x < n && y < m && old[x] == new[y] {
+        x = x + 1
+        y = y + 1
+      }
+      v[idx] = x
+      if x >= n && y >= m {
+        final_d = d
+        found = true
+        break
+      }
+    }
+    if found {
+      break
+    }
+  }
+  let edits : Array[DiffEditOp] = []
+  let mut cx = n
+  let mut cy = m
+  for d = final_d; d > 0; d = d - 1 {
+    let prev_v = traces[d]
+    let k = cx - cy
+    let idx = k + max
+    let prev_k = if k == -d || (k != d && prev_v[idx - 1] < prev_v[idx + 1]) {
+      k + 1
+    } else {
+      k - 1
+    }
+    let prev_x = prev_v[prev_k + max]
+    let prev_y = prev_x - prev_k
+    while cx > prev_x && cy > prev_y {
+      cx = cx - 1
+      cy = cy - 1
+      edits.push(DiffEditOp::Keep(cx, cy))
+    }
+    if cx > prev_x {
+      cx = cx - 1
+      edits.push(DiffEditOp::Delete(cx))
+    } else if cy > prev_y {
+      cy = cy - 1
+      edits.push(DiffEditOp::Insert(cy))
+    }
+  }
+  while cx > 0 && cy > 0 {
+    cx = cx - 1
+    cy = cy - 1
+    edits.push(DiffEditOp::Keep(cx, cy))
+  }
+  edits.rev()
+}
+
+///|
+
+///|
+fn diff_emit_unified_hunks(
   out : Array[String],
   old_content : Bytes?,
   new_content : Bytes?,
+  context_lines : Int,
 ) -> Unit {
   guard old_content is Some(_) || new_content is Some(_) else { return }
   let old_lines = match old_content {
@@ -360,19 +457,173 @@ fn diff_emit_unified_hunk(
     Some(data) => diff_split_lines_no_trailing_empty(data)
     None => []
   }
+  let old_has_trailing_nl = match old_content {
+    Some(data) => data.length() > 0 && data[data.length() - 1] == b'\n'
+    None => true
+  }
+  let new_has_trailing_nl = match new_content {
+    Some(data) => data.length() > 0 && data[data.length() - 1] == b'\n'
+    None => true
+  }
   if old_lines.length() == 0 && new_lines.length() == 0 {
     return
   }
-  let old_start = if old_lines.length() == 0 { 0 } else { 1 }
-  let new_start = if new_lines.length() == 0 { 0 } else { 1 }
-  let old_range = diff_format_range(old_start, old_lines.length())
-  let new_range = diff_format_range(new_start, new_lines.length())
-  out.push("@@ -\{old_range} +\{new_range} @@")
-  for line in old_lines {
-    out.push("-" + line)
+  let edits = diff_myers(old_lines, new_lines)
+  // Build annotated lines with old/new line numbers
+  let annotated : Array[(Int, Int, Int, String)] = [] // (kind, old_lineno, new_lineno, text)
+  for edit in edits {
+    match edit {
+      DiffEditOp::Keep(oi, ni) => annotated.push((0, oi, ni, old_lines[oi]))
+      DiffEditOp::Delete(oi) => annotated.push((1, oi, -1, old_lines[oi]))
+      DiffEditOp::Insert(ni) => annotated.push((2, -1, ni, new_lines[ni]))
+    }
   }
-  for line in new_lines {
-    out.push("+" + line)
+  // Find change ranges (non-Keep runs) and group into hunks with context
+  let changes : Array[(Int, Int)] = [] // (start_idx, end_idx) in annotated
+  let mut i = 0
+  while i < annotated.length() {
+    if annotated[i].0 != 0 {
+      let start = i
+      while i < annotated.length() && annotated[i].0 != 0 {
+        i += 1
+      }
+      changes.push((start, i))
+    } else {
+      i += 1
+    }
+  }
+  if changes.length() == 0 {
+    return
+  }
+  // Group changes into hunks: merge if gap between changes <= 2*context_lines
+  let hunks : Array[(Int, Int)] = [] // (start, end) in annotated, inclusive of context
+  let mut hunk_start = if changes[0].0 > context_lines {
+    changes[0].0 - context_lines
+  } else {
+    0
+  }
+  let mut hunk_end = if changes[0].1 + context_lines < annotated.length() {
+    changes[0].1 + context_lines
+  } else {
+    annotated.length()
+  }
+  for ci = 1; ci < changes.length(); ci = ci + 1 {
+    let (cs, ce) = changes[ci]
+    let ctx_start = if cs > context_lines { cs - context_lines } else { 0 }
+    if ctx_start <= hunk_end {
+      // Merge with current hunk
+      hunk_end = if ce + context_lines < annotated.length() {
+        ce + context_lines
+      } else {
+        annotated.length()
+      }
+    } else {
+      hunks.push((hunk_start, hunk_end))
+      hunk_start = ctx_start
+      hunk_end = if ce + context_lines < annotated.length() {
+        ce + context_lines
+      } else {
+        annotated.length()
+      }
+    }
+  }
+  hunks.push((hunk_start, hunk_end))
+  // Emit each hunk
+  for hunk in hunks {
+    let (hs, he) = hunk
+    // Calculate old/new start line and count
+    let mut old_start = 0
+    let mut old_count = 0
+    let mut new_start = 0
+    let mut new_count = 0
+    let mut first_old = true
+    let mut first_new = true
+    for j = hs; j < he; j = j + 1 {
+      let (kind, oi, ni, _) = annotated[j]
+      match kind {
+        0 => {
+          // context
+          if first_old {
+            old_start = oi + 1
+            first_old = false
+          }
+          if first_new {
+            new_start = ni + 1
+            first_new = false
+          }
+          old_count += 1
+          new_count += 1
+        }
+        1 => {
+          // delete
+          if first_old {
+            old_start = oi + 1
+            first_old = false
+          }
+          old_count += 1
+        }
+        _ => {
+          // insert
+          if first_new {
+            new_start = ni + 1
+            first_new = false
+          }
+          new_count += 1
+        }
+      }
+    }
+    if first_old {
+      old_start = if old_lines.length() == 0 { 0 } else { old_count }
+    }
+    if first_new {
+      new_start = if new_lines.length() == 0 { 0 } else { new_count }
+    }
+    let old_range = diff_format_range(old_start, old_count)
+    let new_range = diff_format_range(new_start, new_count)
+    out.push("@@ -\{old_range} +\{new_range} @@")
+    // Emit lines with no-newline markers where needed
+    // git emits "\ No newline at end of file" after the last -/+ line
+    // if the corresponding file doesn't end with newline
+    let mut last_del_is_eof = false
+    let mut last_ins_is_eof = false
+    for j = hs; j < he; j = j + 1 {
+      let (kind, oi, ni, text) = annotated[j]
+      match kind {
+        0 => {
+          // Before context line, check if previous delete was last old line
+          if last_del_is_eof {
+            out.push("\\ No newline at end of file")
+            last_del_is_eof = false
+          }
+          if last_ins_is_eof {
+            out.push("\\ No newline at end of file")
+            last_ins_is_eof = false
+          }
+          out.push(" " + text)
+        }
+        1 => {
+          if last_ins_is_eof {
+            out.push("\\ No newline at end of file")
+            last_ins_is_eof = false
+          }
+          out.push("-" + text)
+          last_del_is_eof = not(old_has_trailing_nl) &&
+            oi == old_lines.length() - 1
+        }
+        _ => {
+          if last_del_is_eof {
+            out.push("\\ No newline at end of file")
+            last_del_is_eof = false
+          }
+          out.push("+" + text)
+          last_ins_is_eof = not(new_has_trailing_nl) &&
+            ni == new_lines.length() - 1
+        }
+      }
+    }
+    if last_del_is_eof || last_ins_is_eof {
+      out.push("\\ No newline at end of file")
+    }
   }
 }
 

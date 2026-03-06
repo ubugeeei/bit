@@ -15,6 +15,7 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
   let mut test_bitmap = false
   let mut use_bitmap = false
   let mut no_object_names = false
+  let mut format : String? = None
   let refs : Array[String] = []
   let excludes : Array[String] = []
   let mut i = 0
@@ -43,6 +44,8 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
       "--use-bitmap-index" => use_bitmap = true
       "--no-use-bitmap-index" => ()
       "--no-object-names" => no_object_names = true
+      _ if arg.has_prefix("--format=") =>
+        format = Some(String::unsafe_substring(arg, start=9, end=arg.length()))
       "--not" => {
         // Next refs are excludes until another --not
         i += 1
@@ -186,8 +189,50 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
     return
   }
   // Output commits
-  for id in result {
-    print_line(id.to_hex())
+  match format {
+    Some(raw_fmt) => {
+      // Parse tformat:/format: prefix
+      let (fmt, use_newline_sep) = if raw_fmt.has_prefix("tformat:") {
+        (String::unsafe_substring(raw_fmt, start=8, end=raw_fmt.length()), true)
+      } else if raw_fmt.has_prefix("format:") {
+        (
+          String::unsafe_substring(raw_fmt, start=7, end=raw_fmt.length()),
+          false,
+        )
+      } else {
+        (raw_fmt, true)
+      }
+      let ref_names : Map[String, Array[String]] = {}
+      for idx, id in result {
+        // Print commit header line
+        print_line("commit " + id.to_hex())
+        // Read commit data and format
+        match db.get(fs, id) {
+          Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit => {
+            let info = @bitcore.parse_commit(obj.data)
+            let fdata = parse_commit_format_data(
+              id,
+              obj.data,
+              info.tree,
+              info.parents,
+              ref_names,
+            )
+            let formatted = format_commit_string(fmt, fdata)
+            print_str(formatted)
+            if use_newline_sep {
+              print_str("\n")
+            } else if idx < result.length() - 1 {
+              print_str("\n")
+            }
+          }
+          _ => ()
+        }
+      }
+    }
+    None =>
+      for id in result {
+        print_line(id.to_hex())
+      }
   }
   // Output objects (trees, blobs) if --objects
   if objects {

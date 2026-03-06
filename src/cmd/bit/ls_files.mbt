@@ -11,6 +11,7 @@ async fn handle_ls_files(args : Array[String]) -> Unit raise Error {
   let mut recurse_submodules = false
   let mut use_nul = false
   let mut error_unmatch = false
+  let mut show_eol = false
   let raw_filters : Array[String] = []
   let mut parse_options = true
   for arg in args {
@@ -28,6 +29,7 @@ async fn handle_ls_files(args : Array[String]) -> Unit raise Error {
         "--no-empty-directory" => no_empty_directory = true
         "--recurse-submodules" => recurse_submodules = true
         "--error-unmatch" => error_unmatch = true
+        "--eol" => show_eol = true
         "-z" => use_nul = true
         _ if arg.has_prefix("-") => warn_unimplemented_arg("ls-files", arg)
         _ => raw_filters.push(arg)
@@ -48,6 +50,35 @@ async fn handle_ls_files(args : Array[String]) -> Unit raise Error {
         )
       }
     }
+  }
+  if show_eol {
+    let db = @bitlib.ObjectDb::load_lazy(fs, git_dir)
+    for e in entries {
+      if not(ls_files_matches_filters(e.path, filters)) {
+        continue
+      }
+      // Detect index EOL from blob content
+      let i_eol = match db.get(fs, e.id) {
+        Some(obj) if obj.obj_type == @bitcore.ObjectType::Blob =>
+          detect_eol_type(obj.data)
+        _ => ""
+      }
+      // Detect worktree EOL from file on disk
+      let abs = root + "/" + e.path
+      let w_eol = if fs.is_file(abs) {
+        let content = fs.read_file(abs) catch { _ => Bytes::default() }
+        detect_eol_type(content)
+      } else {
+        ""
+      }
+      // Resolve gitattributes
+      let attrs = @bitlib.resolve_eol_attrs(fs, root, e.path)
+      let attr_str = format_eol_attr(attrs)
+      print_str(
+        "i/\{i_eol}\tw/\{w_eol}\tattr/\{attr_str}\t\{e.path}" + terminator,
+      )
+    }
+    return ()
   }
   if show_others {
     // Build set of tracked paths and their parent directories
@@ -667,6 +698,60 @@ fn format_mode(mode : Int) -> String {
   }
   digits.rev_in_place()
   digits.iter().fold(init="", (acc, d) => acc + d)
+}
+
+///|
+fn detect_eol_type(content : Bytes) -> String {
+  if content.length() == 0 {
+    return ""
+  }
+  let limit = if content.length() > 8000 { 8000 } else { content.length() }
+  for i in 0..<limit {
+    if content[i] == b'\x00' {
+      return ""
+    }
+  }
+  let mut has_lf = false
+  let mut has_crlf = false
+  let mut i = 0
+  while i < content.length() {
+    if content[i] == b'\r' &&
+      i + 1 < content.length() &&
+      content[i + 1] == b'\n' {
+      has_crlf = true
+      i += 2
+    } else if content[i] == b'\n' {
+      has_lf = true
+      i += 1
+    } else {
+      i += 1
+    }
+  }
+  if has_crlf && has_lf {
+    "mixed"
+  } else if has_crlf {
+    "crlf"
+  } else if has_lf {
+    "lf"
+  } else {
+    ""
+  }
+}
+
+///|
+fn format_eol_attr(attrs : @bitlib.FileEolAttrs) -> String {
+  match (attrs.text, attrs.eol) {
+    (@bitlib.TextAttr::Unspecified, @bitlib.EolAttr::Unspecified) => ""
+    (@bitlib.TextAttr::Auto, @bitlib.EolAttr::Unspecified) => "text=auto"
+    (@bitlib.TextAttr::Auto, @bitlib.EolAttr::Lf) => "text=auto eol=lf"
+    (@bitlib.TextAttr::Auto, @bitlib.EolAttr::Crlf) => "text=auto eol=crlf"
+    (@bitlib.TextAttr::Set, @bitlib.EolAttr::Unspecified) => "text"
+    (@bitlib.TextAttr::Set, @bitlib.EolAttr::Lf) => "text eol=lf"
+    (@bitlib.TextAttr::Set, @bitlib.EolAttr::Crlf) => "text eol=crlf"
+    (@bitlib.TextAttr::Unset, _) => "-text"
+    (@bitlib.TextAttr::Unspecified, @bitlib.EolAttr::Lf) => "eol=lf"
+    (@bitlib.TextAttr::Unspecified, @bitlib.EolAttr::Crlf) => "eol=crlf"
+  }
 }
 
 ///|
