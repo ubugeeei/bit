@@ -13,6 +13,9 @@ async fn handle_for_each_ref(args : Array[String]) -> Unit raise Error {
   let mut merged : String? = None
   let mut no_merged : String? = None
   let mut quote_style = ""
+  let mut omit_empty = false
+  let mut use_stdin = false
+  let mut ignore_case = false
   let mut i = 0
   while i < args.length() {
     let arg = args[i]
@@ -90,7 +93,10 @@ async fn handle_for_each_ref(args : Array[String]) -> Unit raise Error {
       }
       _ if arg.has_prefix("--exclude=") =>
         excludes.push(String::unsafe_substring(arg, start=10, end=arg.length()))
-      "--contains" | "--no-contains" | "--omit-empty" | "--stdin" => ()
+      "--omit-empty" => omit_empty = true
+      "--stdin" => use_stdin = true
+      "--ignore-case" | "-i" => ignore_case = true
+      "--contains" | "--no-contains" => ()
       _ if arg.has_prefix("-") => warn_unimplemented_arg("for-each-ref", arg)
       _ => patterns.push(arg)
     }
@@ -98,6 +104,21 @@ async fn handle_for_each_ref(args : Array[String]) -> Unit raise Error {
   }
   ignore(merged)
   ignore(no_merged)
+  // --stdin: read patterns from stdin, fail if extra args
+  if use_stdin {
+    if patterns.length() > 0 {
+      eprint_line("fatal: unknown arguments supplied with --stdin")
+      @sys.exit(129)
+      return
+    }
+    let stdin_text = decode_bytes(read_all_stdin())
+    for line_view in stdin_text.split("\n") {
+      let line = line_view.to_string()
+      if line.length() > 0 {
+        patterns.push(line)
+      }
+    }
+  }
   // Collect all refs
   let all_refs = @bitrepo.show_ref(fs, git_dir)
   // Filter by patterns
@@ -106,8 +127,10 @@ async fn handle_for_each_ref(args : Array[String]) -> Unit raise Error {
     let (refname, id) = item
     if patterns.length() > 0 {
       let mut matched = false
+      let match_ref = if ignore_case { refname.to_lower() } else { refname }
       for pattern in patterns {
-        if for_each_ref_match_pattern(refname, pattern) {
+        let match_pat = if ignore_case { pattern.to_lower() } else { pattern }
+        if for_each_ref_match_pattern(match_ref, match_pat) {
           matched = true
           break
         }
@@ -167,11 +190,21 @@ async fn handle_for_each_ref(args : Array[String]) -> Unit raise Error {
         idx -= 1
       }
       // All keys equal — fall back on refname
-      lexicographic_compare(a.0, b.0)
+      if ignore_case {
+        lexicographic_compare(a.0.to_lower(), b.0.to_lower())
+      } else {
+        lexicographic_compare(a.0, b.0)
+      }
     })
   } else {
     // Default sort by refname (lexicographic, not shortlex)
-    filtered.sort_by(fn(a, b) { lexicographic_compare(a.0, b.0) })
+    filtered.sort_by(fn(a, b) {
+      if ignore_case {
+        lexicographic_compare(a.0.to_lower(), b.0.to_lower())
+      } else {
+        lexicographic_compare(a.0, b.0)
+      }
+    })
   }
   // Load object db for object lookups
   let db = @bitlib.ObjectDb::load(fs, git_dir)
@@ -186,6 +219,9 @@ async fn handle_for_each_ref(args : Array[String]) -> Unit raise Error {
     let line = for_each_ref_format(
       fs, git_dir, db, format, refname, id, quote_style,
     )
+    if omit_empty && line.length() == 0 {
+      continue
+    }
     print_line(line)
     output_count += 1
   }
