@@ -32,9 +32,13 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
     }
     None => ()
   }
-  let cwd_abs = match @sys.get_env_var("GIT_SHIM_PWD") {
+  let cwd_abs = match @sys.get_env_var("GIT_SHIM_CWD") {
     Some(v) => v
-    None => @sys.get_env_var("PWD").unwrap_or(root)
+    None =>
+      match @sys.get_env_var("GIT_SHIM_PWD") {
+        Some(v) => v
+        None => @sys.get_env_var("PWD").unwrap_or(root)
+      }
   }
   let abs_git_dir = if git_dir.has_prefix("/") {
     git_dir
@@ -51,6 +55,7 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
   let mut short_length : Int? = None
   let mut abbrev_ref = false
   let mut symbolic_full_name = false
+  let mut path_format : String? = None // "absolute" or "relative"
   let mut output_object_format : String? = None
   let output_object_format_arg_indices : Map[Int, Bool] = {}
   let mut arg_index = 0
@@ -86,6 +91,21 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
         }
       _ if arg.has_prefix("--abbrev-ref=") => abbrev_ref = true
       _ if arg.has_prefix("--show-object-format=") => show_object_format = true
+      _ if arg.has_prefix("--path-format=") => {
+        let mode = String::unsafe_substring(arg, start=14, end=arg.length())
+        if mode == "absolute" || mode == "relative" {
+          path_format = Some(mode)
+        } else {
+          eprint_line("error: unsupported argument to --path-format: '\{mode}'")
+          @sys.exit(129)
+        }
+      }
+      "--path-format" => {
+        eprint_line(
+          "error: option `--path-format` requires a value (absolute|relative)",
+        )
+        @sys.exit(129)
+      }
       _ if arg.has_prefix("--output-object-format=") => {
         output_object_format_arg_indices[arg_index] = true
         output_object_format = Some(
@@ -202,13 +222,51 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
         @sys.exit(128)
       }
       let requested = args[process_index + 1]
-      print_line(rev_parse_resolve_git_path(cwd_abs, git_dir, requested))
+      let result = match path_format {
+        Some("absolute") => {
+          let abs = if abs_git_dir.has_suffix("/") {
+            abs_git_dir + requested
+          } else {
+            abs_git_dir + "/" + requested
+          }
+          abs
+        }
+        Some("relative") => {
+          let abs = if abs_git_dir.has_suffix("/") {
+            abs_git_dir + requested
+          } else {
+            abs_git_dir + "/" + requested
+          }
+          rev_parse_make_relative(abs, cwd_abs)
+        }
+        _ => rev_parse_resolve_git_path(cwd_abs, git_dir, requested)
+      }
+      print_line(result)
       process_index += 2
       continue
     }
     if arg.has_prefix("--git-path=") {
       let requested = String::unsafe_substring(arg, start=11, end=arg.length())
-      print_line(rev_parse_resolve_git_path(cwd_abs, git_dir, requested))
+      let result = match path_format {
+        Some("absolute") => {
+          let abs = if abs_git_dir.has_suffix("/") {
+            abs_git_dir + requested
+          } else {
+            abs_git_dir + "/" + requested
+          }
+          abs
+        }
+        Some("relative") => {
+          let abs = if abs_git_dir.has_suffix("/") {
+            abs_git_dir + requested
+          } else {
+            abs_git_dir + "/" + requested
+          }
+          rev_parse_make_relative(abs, cwd_abs)
+        }
+        _ => rev_parse_resolve_git_path(cwd_abs, git_dir, requested)
+      }
+      print_line(result)
       process_index += 1
       continue
     }
@@ -244,8 +302,20 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
     }
     match arg {
       "--git-dir" =>
-        print_line(rev_parse_display_git_dir(cwd_abs, root, git_dir))
+        match path_format {
+          Some("absolute") => print_line(abs_git_dir)
+          Some("relative") =>
+            print_line(rev_parse_make_relative(abs_git_dir, cwd_abs))
+          _ => print_line(rev_parse_display_git_dir(cwd_abs, root, git_dir))
+        }
       "--absolute-git-dir" => print_line(abs_git_dir)
+      "--git-common-dir" =>
+        // For now, git-common-dir == git-dir (no worktree support)
+        // Default: relative path from cwd (unlike --git-dir which returns absolute)
+        match path_format {
+          Some("absolute") => print_line(abs_git_dir)
+          _ => print_line(rev_parse_make_relative(abs_git_dir, cwd_abs))
+        }
       "--is-bare-repository" =>
         print_line(
           if rev_parse_is_bare_repository(fs, git_dir, root) {
@@ -272,21 +342,30 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
             "false"
           },
         )
-      "--show-prefix" => {
-        let prefix = rev_parse_show_prefix(root, cwd_abs)
-        print_line(prefix)
-      }
+      "--show-prefix" =>
+        // Inside .git dir, prefix is empty
+        if rev_parse_is_inside_git_dir(cwd_abs, abs_git_dir) {
+          print_line("")
+        } else {
+          let prefix = rev_parse_show_prefix(root, cwd_abs)
+          print_line(prefix)
+        }
       "--show-cdup" => {
         let cdup = rev_parse_show_cdup(root, cwd_abs)
         print_line(cdup)
       }
       "--show-toplevel" => {
-        let abs = if root == "." {
-          @sys.get_env_var("PWD").unwrap_or(root)
-        } else {
-          root
+        // Inside .git dir, --show-toplevel should fail
+        if rev_parse_is_inside_git_dir(cwd_abs, abs_git_dir) {
+          eprint_line("fatal: this operation must be run in a work tree")
+          @sys.exit(128)
         }
-        print_line(abs)
+        let abs_root = rev_parse_resolve_abs_root(root, cwd_abs)
+        let display = match path_format {
+          Some("relative") => rev_parse_make_relative(abs_root, cwd_abs)
+          _ => abs_root
+        }
+        print_line(display)
       }
       "--local-env-vars" => {
         // Output the list of GIT_* env vars that affect the local repository
@@ -300,23 +379,53 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
           print_line(v)
         }
       }
-      "--show-ref-format" =>
-        print_line(
-          if is_reftable_repo(fs, git_dir) {
-            "reftable"
-          } else {
-            "files"
-          },
-        )
+      "--show-ref-format" => {
+        let config_path = git_dir + "/config"
+        match
+          @bitlib.read_config_value(fs, config_path, "extensions", "refstorage") {
+          Some(raw_val) => {
+            let val = @bitlib.config_strip_quotes(raw_val).to_lower()
+            if val == "reftable" {
+              print_line("reftable")
+            } else if val == "files" || val == "" {
+              print_line("files")
+            } else {
+              eprint_line(
+                "error: invalid value for 'extensions.refstorage': '\{val}'",
+              )
+              @sys.exit(128)
+            }
+          }
+          None =>
+            print_line(
+              if is_reftable_repo(fs, git_dir) {
+                "reftable"
+              } else {
+                "files"
+              },
+            )
+        }
+      }
       "--show-object-format" => print_line(repo_object_format(fs, git_dir))
       _ if arg.has_prefix("--show-object-format=") => {
         let mode = String::unsafe_substring(arg, start=21, end=arg.length())
         if mode == "storage" || mode == "input" || mode == "output" {
           print_line(repo_object_format(fs, git_dir))
+        } else if mode == "compat" {
+          match repo_compat_object_format(fs, git_dir) {
+            Some(compat) => print_line(compat)
+            None => print_line("")
+          }
         } else {
           eprint_line("fatal: unknown mode for --show-object-format: \{mode}")
           @sys.exit(128)
         }
+      }
+      "--is-shallow-repository" => {
+        // Check if .git/shallow exists
+        let shallow_file = git_dir + "/shallow"
+        let is_shallow = @fs.is_file(shallow_file) catch { _ => false }
+        print_line(if is_shallow { "true" } else { "false" })
       }
       "--revs-only" => ()
       "--verify" => ()
@@ -387,6 +496,41 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
       }
       "--output-object-format" => ()
       _ if arg.has_prefix("--output-object-format=") => ()
+      _ if arg.has_prefix("--path-format=") => {
+        // Update path_format mid-stream (can change multiple times)
+        let mode = String::unsafe_substring(arg, start=14, end=arg.length())
+        if mode == "absolute" || mode == "relative" {
+          path_format = Some(mode)
+        }
+        // Error already handled in pre-pass
+      }
+      "--path-format" => () // Already handled in pre-pass (exits with error)
+      _ if arg.has_prefix("--since=") || arg.has_prefix("--after=") => {
+        // Convert --since=DATE to --max-age=TIMESTAMP
+        let date_str = if arg.has_prefix("--since=") {
+          String::unsafe_substring(arg, start=8, end=arg.length())
+        } else {
+          String::unsafe_substring(arg, start=8, end=arg.length())
+        }
+        let timestamp = parse_date_to_timestamp(date_str)
+        print_line("--max-age=\{timestamp}")
+      }
+      _ if arg.has_prefix("--until=") || arg.has_prefix("--before=") => {
+        let date_str = if arg.has_prefix("--until=") {
+          String::unsafe_substring(arg, start=8, end=arg.length())
+        } else {
+          String::unsafe_substring(arg, start=9, end=arg.length())
+        }
+        let timestamp = parse_date_to_timestamp(date_str)
+        print_line("--min-age=\{timestamp}")
+      }
+      "--bisect" =>
+        // Output refs/bisect/bad-* (positive) and ^refs/bisect/good-* (negated)
+        if symbolic_full_name {
+          rev_parse_print_bisect_symbolic(fs, git_dir)
+        } else {
+          rev_parse_print_bisect(fs, git_dir)
+        }
       _ if arg.has_prefix("-") => warn_unimplemented_arg("rev-parse", arg)
       _ => {
         // Expand @{-N} prefix to actual branch name
@@ -457,6 +601,7 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
   }
   ignore(show_ref_format)
   ignore(show_object_format)
+  ignore(path_format)
 }
 
 ///|
@@ -480,6 +625,7 @@ fn rev_parse_display_git_dir(
       return "."
     }
   }
+  // When in a subdirectory, --git-dir returns absolute path
   git_dir
 }
 
@@ -510,27 +656,8 @@ fn rev_parse_resolve_git_path(
   } else {
     abs_git_dir + "/" + requested_path
   }
-  let cwd_prefix = if cwd_abs.has_suffix("/") { cwd_abs } else { cwd_abs + "/" }
-  if abs_target == cwd_abs {
-    return "."
-  }
-  if abs_target.has_prefix(cwd_prefix) {
-    return String::unsafe_substring(
-      abs_target,
-      start=cwd_prefix.length(),
-      end=abs_target.length(),
-    )
-  }
-  if git_dir == "." {
-    return requested_path
-  }
-  if git_dir.has_prefix("/") {
-    return abs_target
-  }
-  if git_dir.has_suffix("/") {
-    return git_dir + requested_path
-  }
-  git_dir + "/" + requested_path
+  // Always compute relative from cwd
+  rev_parse_make_relative(abs_target, cwd_abs)
 }
 
 ///|
@@ -1173,4 +1300,260 @@ fn rev_parse_resolve_git_dir_arg(
     }
   }
   None
+}
+
+///|
+fn rev_parse_resolve_abs_root(root : String, cwd_abs : String) -> String {
+  if root.has_prefix("/") {
+    root
+  } else {
+    let base = match @sys.get_env_var("GIT_SHIM_PWD") {
+      Some(v) => v
+      None => @sys.get_env_var("PWD").unwrap_or(cwd_abs)
+    }
+    if root == "." {
+      base
+    } else {
+      normalize_path(base + "/" + root)
+    }
+  }
+}
+
+///|
+fn rev_parse_make_relative(abs_target : String, cwd_abs : String) -> String {
+  if abs_target == cwd_abs {
+    return "./"
+  }
+  let cwd_prefix = if cwd_abs.has_suffix("/") { cwd_abs } else { cwd_abs + "/" }
+  if abs_target.has_prefix(cwd_prefix) {
+    return String::unsafe_substring(
+      abs_target,
+      start=cwd_prefix.length(),
+      end=abs_target.length(),
+    )
+  }
+  // Count how many segments we need to go up
+  let mut common_len = 0
+  let target_chars = abs_target.to_array()
+  let cwd_chars = cwd_abs.to_array()
+  let min_len = if target_chars.length() < cwd_chars.length() {
+    target_chars.length()
+  } else {
+    cwd_chars.length()
+  }
+  for i in 0..<min_len {
+    if target_chars[i] != cwd_chars[i] {
+      break
+    }
+    if target_chars[i] == '/' {
+      common_len = i + 1
+    }
+  }
+  if common_len == 0 && min_len > 0 {
+    common_len = 1
+  }
+  let remaining_cwd = String::unsafe_substring(
+    cwd_abs,
+    start=common_len,
+    end=cwd_abs.length(),
+  )
+  let remaining_target = String::unsafe_substring(
+    abs_target,
+    start=common_len,
+    end=abs_target.length(),
+  )
+  let depth = remaining_cwd.iter().filter(fn(c) { c == '/' }).count() + 1
+  let parts : Array[String] = []
+  for _ in 0..<depth {
+    parts.push("..")
+  }
+  let up = parts.join("/")
+  if remaining_target.length() == 0 {
+    up
+  } else {
+    up + "/" + remaining_target
+  }
+}
+
+///|
+fn parse_date_to_timestamp(date_str : String) -> Int64 {
+  // Try parsing ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
+  if date_str.find("T") is Some(_) {
+    return parse_iso8601_timestamp(date_str)
+  }
+  // Try parsing as a raw timestamp
+  let mut is_numeric = true
+  for c in date_str {
+    if c < '0' || c > '9' {
+      is_numeric = false
+      break
+    }
+  }
+  if is_numeric && date_str.length() > 0 {
+    let mut result = 0L
+    for c in date_str {
+      result = result * 10L + (c.to_int() - '0'.to_int()).to_int64()
+    }
+    return result
+  }
+  0L
+}
+
+///|
+fn parse_iso8601_timestamp(date_str : String) -> Int64 {
+  let s = date_str.to_array()
+  if s.length() < 19 {
+    return 0L
+  }
+  let year = parse_date_digits(s, 0, 4)
+  let month = parse_date_digits(s, 5, 7)
+  let day = parse_date_digits(s, 8, 10)
+  let hour = parse_date_digits(s, 11, 13)
+  let minute = parse_date_digits(s, 14, 16)
+  let second = parse_date_digits(s, 17, 19)
+  let days = days_since_epoch(year, month, day)
+  days.to_int64() * 86400L +
+  hour.to_int64() * 3600L +
+  minute.to_int64() * 60L +
+  second.to_int64()
+}
+
+///|
+fn parse_date_digits(chars : Array[Char], start : Int, end : Int) -> Int {
+  let mut result = 0
+  for i in start..<end {
+    if i < chars.length() {
+      let c = chars[i]
+      if c >= '0' && c <= '9' {
+        result = result * 10 + (c.to_int() - '0'.to_int())
+      }
+    }
+  }
+  result
+}
+
+///|
+fn days_since_epoch(year : Int, month : Int, day : Int) -> Int {
+  let mut days = 0
+  for y in 1970..<year {
+    days += if is_leap_year(y) { 366 } else { 365 }
+  }
+  let month_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  for m in 1..<month {
+    days += month_days[m - 1]
+    if m == 2 && is_leap_year(year) {
+      days += 1
+    }
+  }
+  days + day - 1
+}
+
+///|
+async fn rev_parse_print_bisect_symbolic(
+  fs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+) -> Unit raise Error {
+  let bisect_refs = rev_parse_read_bisect_refs(fs, git_dir)
+  let bad_refs : Array[String] = []
+  let good_refs : Array[String] = []
+  for entry in bisect_refs {
+    if entry.0.has_prefix("refs/bisect/bad") {
+      bad_refs.push(entry.0)
+    } else if entry.0.has_prefix("refs/bisect/good") {
+      good_refs.push(entry.0)
+    }
+  }
+  bad_refs.sort()
+  good_refs.sort()
+  for r in bad_refs {
+    print_line(r)
+  }
+  for r in good_refs {
+    print_line("^\{r}")
+  }
+}
+
+///|
+async fn rev_parse_print_bisect(
+  fs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+) -> Unit raise Error {
+  let bisect_refs = rev_parse_read_bisect_refs(fs, git_dir)
+  let bad_entries : Array[(String, String)] = []
+  let good_entries : Array[(String, String)] = []
+  for entry in bisect_refs {
+    if entry.0.has_prefix("refs/bisect/bad") {
+      bad_entries.push(entry)
+    } else if entry.0.has_prefix("refs/bisect/good") {
+      good_entries.push(entry)
+    }
+  }
+  bad_entries.sort_by(fn(a, b) { a.0.compare(b.0) })
+  good_entries.sort_by(fn(a, b) { a.0.compare(b.0) })
+  for entry in bad_entries {
+    print_line(entry.1)
+  }
+  for entry in good_entries {
+    print_line("^\{entry.1}")
+  }
+}
+
+///|
+fn rev_parse_read_bisect_refs(
+  fs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+) -> Array[(String, String)] raise Error {
+  let result : Array[(String, String)] = []
+  let bisect_dir = git_dir + "/refs/bisect"
+  let is_dir = @fs.is_dir(bisect_dir) catch { _ => false }
+  if not(is_dir) {
+    return result
+  }
+  let entries = @fs.read_dir(bisect_dir) catch { _ => return result }
+  for name in entries {
+    let ref_path = bisect_dir + "/" + name
+    let is_file = @fs.is_file(ref_path) catch { _ => false }
+    if is_file {
+      let content = decode_bytes(fs.read_file(ref_path) catch { e => raise e })
+      let oid_hex = trim_string(content)
+      result.push(("refs/bisect/" + name, oid_hex))
+    }
+  }
+  // Also check packed-refs
+  let packed_path = git_dir + "/packed-refs"
+  let packed_exists = @fs.is_file(packed_path) catch { _ => false }
+  if packed_exists {
+    let content = decode_bytes(fs.read_file(packed_path) catch { e => raise e })
+    for line_view in content.split("\n") {
+      let line = trim_string(line_view.to_string())
+      if line.length() == 0 || line.has_prefix("#") || line.has_prefix("^") {
+        continue
+      }
+      match line.find(" ") {
+        Some(idx) => {
+          let oid = String::unsafe_substring(line, start=0, end=idx)
+          let refname = String::unsafe_substring(
+            line,
+            start=idx + 1,
+            end=line.length(),
+          )
+          if refname.has_prefix("refs/bisect/") {
+            // Don't add if already found in loose refs
+            let mut found = false
+            for existing in result {
+              if existing.0 == refname {
+                found = true
+                break
+              }
+            }
+            if not(found) {
+              result.push((refname, oid))
+            }
+          }
+        }
+        None => ()
+      }
+    }
+  }
+  result
 }
