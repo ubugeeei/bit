@@ -245,9 +245,18 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
       "--output-object-format" => ()
       _ if arg.has_prefix("--output-object-format=") => ()
       _ if arg.has_prefix("-") => warn_unimplemented_arg("rev-parse", arg)
-      _ =>
+      _ => {
+        // Expand @{-N} prefix to actual branch name
+        let effective_arg = match parse_at_minus_prefix(arg) {
+          Some((n, rest)) =>
+            match resolve_at_minus(fs, git_dir, n) {
+              Some(branch) => branch + rest
+              None => arg // leave as-is, will fail later
+            }
+          None => arg
+        }
         if abbrev_ref {
-          let name = resolve_abbrev_ref_name(fs, git_dir, arg)
+          let name = resolve_abbrev_ref_name(fs, git_dir, effective_arg)
           match name {
             Some(value) => print_line(value)
             None =>
@@ -258,7 +267,7 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
               }
           }
         } else if symbolic_full_name {
-          let name = resolve_symbolic_full_name(fs, git_dir, arg)
+          let name = resolve_symbolic_full_name(fs, git_dir, effective_arg)
           match name {
             Some(value) => print_line(value)
             None =>
@@ -269,16 +278,16 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
               }
           }
         } else {
-          let id = if arg == "FETCH_HEAD" {
+          let id = if effective_arg == "FETCH_HEAD" {
             resolve_fetch_head_oid(fs, git_dir)
-          } else if arg.has_prefix(":") &&
-            arg.length() > 1 &&
-            not(arg.has_prefix(":/")) {
-            resolve_index_path_oid(fs, git_dir, arg)
-          } else if arg.find("@{") is Some(_) {
-            resolve_reflog_selector(fs, git_dir, arg)
+          } else if effective_arg.has_prefix(":") &&
+            effective_arg.length() > 1 &&
+            not(effective_arg.has_prefix(":/")) {
+            resolve_index_path_oid(fs, git_dir, effective_arg)
+          } else if effective_arg.find("@{") is Some(_) {
+            resolve_reflog_selector(fs, git_dir, effective_arg)
           } else {
-            @bitrepo.rev_parse(fs, git_dir, arg)
+            @bitrepo.rev_parse(fs, git_dir, effective_arg)
           }
           match id {
             Some(oid) => {
@@ -299,6 +308,7 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
               }
           }
         }
+      }
     }
     process_index += 1
   }
@@ -545,6 +555,66 @@ fn resolve_reflog_selector(
     }
     None => None
   }
+}
+
+///|
+/// Resolve @{-N} to the Nth previously checked-out branch name.
+/// Returns the branch name (e.g. "refs/heads/old-branch") or None.
+fn resolve_at_minus(
+  fs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  n : Int,
+) -> String? raise Error {
+  if n <= 0 {
+    return None
+  }
+  let entries = @bitrepo.read_reflog(fs, git_dir, "HEAD")
+  let mut count = 0
+  // Walk reflog from newest to oldest (entries are stored oldest-first)
+  let len = entries.length()
+  for i = len - 1; i >= 0; i = i - 1 {
+    let msg = entries[i].message
+    // Look for "checkout: moving from X to Y"
+    if msg.has_prefix("checkout: moving from ") {
+      count += 1
+      if count == n {
+        // Extract the "from" branch name
+        let rest = String::unsafe_substring(msg, start=21, end=msg.length())
+        match rest.find(" to ") {
+          Some(idx) => {
+            let branch = String::unsafe_substring(rest, start=0, end=idx)
+            return Some(branch)
+          }
+          None => return None
+        }
+      }
+    }
+  }
+  None
+}
+
+///|
+/// Parse @{-N} from the beginning of a spec.
+/// Returns (N, rest_of_spec) if spec starts with @{-N}.
+fn parse_at_minus_prefix(spec : String) -> (Int, String)? {
+  guard spec.has_prefix("@{-") else { return None }
+  let chars = spec.to_array()
+  let mut i = 3
+  let mut n = 0
+  let mut found_digit = false
+  while i < chars.length() && chars[i] != '}' {
+    if chars[i] < '0' || chars[i] > '9' {
+      return None
+    }
+    n = n * 10 + (chars[i].to_int() - '0'.to_int())
+    found_digit = true
+    i += 1
+  }
+  guard found_digit && i < chars.length() && chars[i] == '}' else {
+    return None
+  }
+  let rest = String::unsafe_substring(spec, start=i + 1, end=spec.length())
+  Some((n, rest))
 }
 
 ///|

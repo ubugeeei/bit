@@ -728,7 +728,13 @@ fn for_each_ref_commit_atom(
   let mut past_headers = false
   let body_lines : Array[String] = []
   for line_view in text.split("\n") {
-    let line = line_view.to_string()
+    let raw_line = line_view.to_string()
+    // Strip trailing \r for header/subject parsing (CRLF support)
+    let line = if raw_line.has_suffix("\r") {
+      String::unsafe_substring(raw_line, start=0, end=raw_line.length() - 1)
+    } else {
+      raw_line
+    }
     if not(past_headers) {
       if line.length() == 0 {
         past_headers = true
@@ -745,7 +751,8 @@ fn for_each_ref_commit_atom(
       subject = line
       in_body = true
     } else {
-      body_lines.push(line)
+      // Body lines preserve original \r for CRLF fidelity
+      body_lines.push(raw_line)
     }
   }
   body = body_lines.join("\n")

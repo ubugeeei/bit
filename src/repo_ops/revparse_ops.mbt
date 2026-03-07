@@ -82,11 +82,32 @@ fn resolve_commit_message_search(
   if needle.length() == 0 {
     return None
   }
+  // Bare "!" is invalid
+  if needle == "!" {
+    raise @object.GitError::InvalidObject(
+      "Invalid search pattern: \\{base_spec}^{{/!}}",
+    )
+  }
   let base = rev_parse(fs, git_dir, base_spec)
   guard base is Some(base_id) else { return None }
-  // !-prefix means negation: find commit whose message does NOT contain the pattern
+  // "!!" prefix means literal "!" search (strip one "!")
+  if needle.has_prefix("!!") {
+    let actual_needle = substring_revparse(needle, 1, needle.length())
+    return find_reachable_commit_by_message_from_many(
+      fs,
+      git_dir,
+      [base_id],
+      actual_needle,
+    )
+  }
+  // "!-" prefix means negation: find commit whose message does NOT contain the pattern
   if needle.has_prefix("!-") {
     let actual_needle = substring_revparse(needle, 2, needle.length())
+    if actual_needle.length() == 0 {
+      raise @object.GitError::InvalidObject(
+        "Invalid search pattern: \\{base_spec}^{{/!-}}",
+      )
+    }
     return find_reachable_commit_by_message_from_many(
       fs,
       git_dir,
