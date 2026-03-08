@@ -8,6 +8,7 @@ pub(all) struct InitOptions {
   template_dir : String?
   ref_format : String
   object_format : String
+  is_reinit : Bool
 }
 
 ///|
@@ -19,6 +20,7 @@ pub fn InitOptions::new() -> InitOptions {
     template_dir: None,
     ref_format: "files",
     object_format: "sha1",
+    is_reinit: false,
   }
 }
 
@@ -39,6 +41,7 @@ pub fn init_repo(
     template_dir: None,
     ref_format: "files",
     object_format: "sha1",
+    is_reinit: false,
   })
 }
 
@@ -80,8 +83,10 @@ pub fn init_repo_with_options(
     }
     fs.write_string(gitfile_path, "gitdir: " + git_dir + "\n")
   }
-  // Always write HEAD (git init always updates HEAD with default branch)
-  fs.write_string(head_path, "ref: refs/heads/" + opts.default_branch + "\n")
+  // Write HEAD only on fresh init (not re-init)
+  if not(opts.is_reinit) {
+    fs.write_string(head_path, "ref: refs/heads/" + opts.default_branch + "\n")
+  }
   // Create/update config file with appropriate bare setting
   let bare_str = if bare { "true" } else { "false" }
   let mut repository_format_version = "0"
@@ -175,8 +180,10 @@ pub fn init_repo_with_options_with_repo_fs(
     }
     fs.write_string(gitfile_path, "gitdir: " + git_dir + "\n")
   }
-  // Always write HEAD (git init always updates HEAD with default branch)
-  fs.write_string(head_path, "ref: refs/heads/" + opts.default_branch + "\n")
+  // Write HEAD only on fresh init (not re-init)
+  if not(opts.is_reinit) {
+    fs.write_string(head_path, "ref: refs/heads/" + opts.default_branch + "\n")
+  }
   // Create/update config file with appropriate bare setting
   let bare_str = if bare { "true" } else { "false" }
   let mut repository_format_version = "0"

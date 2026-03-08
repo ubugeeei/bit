@@ -171,11 +171,12 @@ test_expect_success '-b shorthand works like --initial-branch' '
     test_grep "ref: refs/heads/develop" .git/HEAD
 '
 
-test_expect_success 'reinit with -b changes HEAD' '
+test_expect_success 'reinit with -b preserves HEAD (matches git behavior)' '
     git_cmd init -b first &&
     test_grep "ref: refs/heads/first" .git/HEAD &&
-    git_cmd init -b second &&
-    test_grep "ref: refs/heads/second" .git/HEAD
+    git_cmd init -b second 2>err &&
+    test_grep "ignored --initial-branch" err &&
+    test_grep "ref: refs/heads/first" .git/HEAD
 '
 
 # =============================================================================

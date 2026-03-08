@@ -585,6 +585,7 @@ pub(all) struct InitOptions {
   template_dir : String?
   ref_format : String
   object_format : String
+  is_reinit : Bool
 }
 pub fn InitOptions::new() -> Self
 

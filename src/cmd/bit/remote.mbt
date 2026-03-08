@@ -2051,6 +2051,7 @@ fn init_clone_destination(
       template_dir: None,
       ref_format,
       object_format,
+      is_reinit: false,
     })
     dest_path
   } else {
@@ -2064,6 +2065,7 @@ fn init_clone_destination(
           template_dir: None,
           ref_format,
           object_format,
+          is_reinit: false,
         })
         path
       }
@@ -2075,6 +2077,7 @@ fn init_clone_destination(
           template_dir: None,
           ref_format,
           object_format,
+          is_reinit: false,
         })
         dest_path + "/.git"
       }

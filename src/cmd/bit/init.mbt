@@ -12,11 +12,7 @@ async fn show_init_command_help() -> Unit {
 async fn handle_init(args : Array[String]) -> Unit raise Error {
   let root = match @sys.get_env_var("GIT_SHIM_CWD") {
     Some(dir) => dir
-    None =>
-      match @sys.get_env_var("GIT_WORK_TREE") {
-        Some(dir) => dir
-        None => @sys.get_env_var("GIT_SHIM_PWD").unwrap_or(".")
-      }
+    None => @sys.get_env_var("GIT_SHIM_PWD").unwrap_or(".")
   }
   let fs = OsFs::new()
   // Parse options
@@ -26,17 +22,36 @@ async fn handle_init(args : Array[String]) -> Unit raise Error {
   let mut target_dir : String? = None
   let mut separate_git_dir : String? = None
   let mut template_dir : String? = None
-  let default_ref_format = match
-    @sys.get_env_var("GIT_TEST_DEFAULT_REF_FORMAT") {
+  // GIT_DEFAULT_REF_FORMAT takes precedence over GIT_TEST_DEFAULT_REF_FORMAT
+  let default_ref_format = match @sys.get_env_var("GIT_DEFAULT_REF_FORMAT") {
     Some(value) => {
       let normalized = value.to_lower()
       if normalized == "reftable" {
         "reftable"
+      } else if normalized == "files" || normalized == "" {
+        "files"
       } else {
+        eprint_line("fatal: unknown ref storage format '\{value}'")
+        @sys.exit(128)
         "files"
       }
     }
-    None => "files"
+    None =>
+      match @sys.get_env_var("GIT_TEST_DEFAULT_REF_FORMAT") {
+        Some(value) => {
+          let normalized = value.to_lower()
+          if normalized == "reftable" {
+            "reftable"
+          } else if normalized == "files" || normalized == "" {
+            "files"
+          } else {
+            eprint_line("fatal: unknown ref storage format '\{value}'")
+            @sys.exit(128)
+            "files"
+          }
+        }
+        None => "files"
+      }
   }
   let mut ref_format = default_ref_format
   let mut ref_format_explicit = false
@@ -122,12 +137,67 @@ async fn handle_init(args : Array[String]) -> Unit raise Error {
     }
     i += 1
   }
+  // Check --bare and --separate-git-dir incompatibility
+  if bare && separate_git_dir is Some(_) {
+    eprint_line(
+      "fatal: options '--separate-git-dir' and '--bare' cannot be used together",
+    )
+    @sys.exit(128)
+    return
+  }
   // Check GIT_DIR and GIT_WORK_TREE environment variables
   let bit_dir_env = @sys.get_env_var("GIT_DIR")
   let work_tree_env = @sys.get_env_var("GIT_WORK_TREE")
-  // Check GIT_TEMPLATE_DIR environment variable
+  // GIT_WORK_TREE without GIT_DIR is an error during init
+  if work_tree_env is Some(_) && (bit_dir_env is None || bare) {
+    eprint_line(
+      "fatal: GIT_WORK_TREE (or --work-tree=<directory>) not allowed without specifying GIT_DIR (or --git-dir=<directory>)",
+    )
+    @sys.exit(128)
+    return
+  }
+  // Check GIT_TEMPLATE_DIR environment variable, then config
   if template_dir is None {
     template_dir = @sys.get_env_var("GIT_TEMPLATE_DIR")
+  }
+  if template_dir is None {
+    // Read init.templatedir from global config
+    let rfs : &@bitcore.RepoFileSystem = fs
+    match find_global_gitconfig_path() {
+      Some(config_path) => {
+        let tpl_val = get_config_value(
+          rfs,
+          config_path,
+          "init.templatedir",
+          None,
+          false,
+        ) catch {
+          _ => None
+        }
+        match tpl_val {
+          Some(tpl_path) => {
+            // Expand ~ to HOME
+            let expanded = if tpl_path.has_prefix("~/") {
+              match @sys.get_env_var("HOME") {
+                Some(home) =>
+                  home +
+                  String::unsafe_substring(
+                    tpl_path,
+                    start=1,
+                    end=tpl_path.length(),
+                  )
+                None => tpl_path
+              }
+            } else {
+              tpl_path
+            }
+            template_dir = Some(expanded)
+          }
+          None => ()
+        }
+      }
+      None => ()
+    }
   }
   // Determine the target path and git directory
   let (path, effective_git_dir) : (String, String?) = match
@@ -170,13 +240,34 @@ async fn handle_init(args : Array[String]) -> Unit raise Error {
         None
       }
   }
-  // Determine default branch: CLI flag > config > "main"
+  // Determine default branch: CLI flag > GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME > config > "master"
   let branch = match initial_branch {
     Some(b) => b
-    None => {
-      let config_branch = init_read_default_branch(fs)
-      config_branch.unwrap_or("main")
-    }
+    None =>
+      match @sys.get_env_var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME") {
+        Some(env_branch) if env_branch != "" => env_branch
+        _ => {
+          let config_branch = init_read_default_branch(fs)
+          config_branch.unwrap_or("master")
+        }
+      }
+  }
+  // Validate branch name
+  if branch.contains(" ") ||
+    branch.contains("~") ||
+    branch.contains("^") ||
+    branch.contains(":") ||
+    branch.contains("\\") ||
+    branch.has_prefix("-") ||
+    branch.has_prefix(".") ||
+    branch.has_suffix(".") ||
+    branch.has_suffix(".lock") ||
+    branch.contains("..") ||
+    branch.contains("@{") ||
+    branch == "" {
+    eprint_line("fatal: invalid branch name: '\{branch}'")
+    @sys.exit(128)
+    return
   }
   // Determine actual git directory path for output message
   let actual_git_dir = match (resolved_sep_git_dir, effective_git_dir) {
@@ -189,13 +280,71 @@ async fn handle_init(args : Array[String]) -> Unit raise Error {
     fs.is_file(actual_git_dir + "/HEAD")
   let mut reinit_tables_list_content : String? = None
   if object_format is None {
-    let env_default = @sys.get_env_var("GIT_DEFAULT_HASH").unwrap_or("sha1")
-    let normalized = env_default.to_lower()
-    if normalized != "sha1" && normalized != "sha256" {
-      eprint_line("fatal: unknown hash algorithm '\{normalized}'")
-      @sys.exit(128)
+    // Check config init.defaultObjectFormat first
+    let rfs2 : &@bitcore.RepoFileSystem = fs
+    let config_obj_format = match find_global_gitconfig_path() {
+      Some(config_path) =>
+        get_config_value(
+          rfs2,
+          config_path,
+          "init.defaultObjectFormat",
+          None,
+          false,
+        ) catch {
+          _ => None
+        }
+      None => None
     }
-    object_format = Some(normalized)
+    match config_obj_format {
+      Some(fmt) => {
+        let normalized = fmt.to_lower()
+        if normalized == "sha1" || normalized == "sha256" {
+          object_format = Some(normalized)
+        } else {
+          eprint_line("warning: unknown hash algorithm '\{fmt}'")
+          // Fall through to env/default
+        }
+      }
+      None => ()
+    }
+    if object_format is None {
+      let env_default = @sys.get_env_var("GIT_DEFAULT_HASH").unwrap_or("sha1")
+      let normalized = env_default.to_lower()
+      if normalized != "sha1" && normalized != "sha256" {
+        eprint_line("fatal: unknown hash algorithm '\{normalized}'")
+        @sys.exit(128)
+      }
+      object_format = Some(normalized)
+    }
+  }
+  // Read init.defaultRefFormat from config (if not explicitly set)
+  if not(ref_format_explicit) && ref_format == "files" {
+    let rfs3 : &@bitcore.RepoFileSystem = fs
+    match find_global_gitconfig_path() {
+      Some(config_path) => {
+        let ref_val = get_config_value(
+          rfs3,
+          config_path,
+          "init.defaultRefFormat",
+          None,
+          false,
+        ) catch {
+          _ => None
+        }
+        match ref_val {
+          Some(fmt) => {
+            let normalized = fmt.to_lower()
+            if normalized == "files" || normalized == "reftable" {
+              ref_format = normalized
+            } else {
+              eprint_line("warning: unknown ref storage format '\{fmt}'")
+            }
+          }
+          None => ()
+        }
+      }
+      None => ()
+    }
   }
   if is_reinit {
     let existing_ref_format = if is_reftable_repo(fs, actual_git_dir) {
@@ -236,6 +385,7 @@ async fn handle_init(args : Array[String]) -> Unit raise Error {
     template_dir,
     ref_format,
     object_format: object_format.unwrap_or("sha1"),
+    is_reinit,
   }
   // Initialize repository
   @bitrepo.init_repo_with_options_with_repo_fs(fs, fs, path, opts)
@@ -257,6 +407,13 @@ async fn handle_init(args : Array[String]) -> Unit raise Error {
   }
   if ref_format == "reftable" {
     apply_reftable_shared_permissions(fs, actual_git_dir, shared_mode)
+  }
+  // Warn about ignored --initial-branch on re-init
+  if is_reinit {
+    match initial_branch {
+      Some(b) => eprint_line("warning: re-init: ignored --initial-branch=\{b}")
+      None => ()
+    }
   }
   // Print appropriate message (unless quiet)
   if not(quiet) {

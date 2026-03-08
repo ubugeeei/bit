@@ -482,6 +482,7 @@ fn storage_handle_init(
     template_dir: None,
     ref_format,
     object_format,
+    is_reinit: false,
   }
   @bitrepo.init_repo_with_options_with_repo_fs(fs, rfs, root, opts)
   if not(args.quiet) {
