@@ -243,10 +243,72 @@ fn find_reachable_commit_by_message_from_many(
 fn commit_message_contains(data : Bytes, needle : String) -> Bool {
   let text = @utf8.decode_lossy(data[:])
   match text.find("\n\n") {
-    Some(idx) =>
-      substring_revparse(text, idx + 2, text.length()).find(needle) is Some(_)
+    Some(idx) => {
+      let msg = substring_revparse(text, idx + 2, text.length())
+      regex_like_contains(msg, needle)
+    }
     None => false
   }
+}
+
+///|
+/// Simple regex-like substring search supporting `.` as any-char and `\\` escapes.
+/// This matches git's basic regex behavior for `^{/pattern}`.
+fn regex_like_contains(text : String, pattern : String) -> Bool {
+  if pattern.length() == 0 {
+    return true
+  }
+  let text_chars = text.to_array()
+  let pat_chars = pattern.to_array()
+  for start in 0..<text_chars.length() {
+    if regex_like_match_at(text_chars, start, pat_chars) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn regex_like_match_at(
+  text : Array[Char],
+  start : Int,
+  pattern : Array[Char],
+) -> Bool {
+  let mut ti = start
+  let mut pi = 0
+  while pi < pattern.length() {
+    if ti >= text.length() {
+      return false
+    }
+    let pc = pattern[pi]
+    if pc == '\\' {
+      if pi + 1 < pattern.length() {
+        if text[ti] != pattern[pi + 1] {
+          return false
+        }
+        ti += 1
+        pi += 2
+        continue
+      }
+      if text[ti] != '\\' {
+        return false
+      }
+      ti += 1
+      pi += 1
+      continue
+    }
+    if pc == '.' {
+      ti += 1
+      pi += 1
+      continue
+    }
+    if text[ti] != pc {
+      return false
+    }
+    ti += 1
+    pi += 1
+  }
+  true
 }
 
 ///|
