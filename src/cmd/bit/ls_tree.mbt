@@ -339,9 +339,10 @@ async fn print_tree_entries(
           )
           print_line(output)
         }
-        None =>
+        None => {
+          let quoted_path = c_quote_path(display_path)
           if name_only {
-            print_line(display_path)
+            print_line(quoted_path)
           } else if object_only {
             let obj_hex = entry.id.to_hex()
             match abbrev {
@@ -364,13 +365,14 @@ async fn print_tree_entries(
             )
             let padded_size = ls_tree_pad_size(size, 7)
             print_line(
-              "\{mode_str} \{type_str} \{entry.id.to_hex()} \{padded_size}\t\{display_path}",
+              "\{mode_str} \{type_str} \{entry.id.to_hex()} \{padded_size}\t\{quoted_path}",
             )
           } else {
             print_line(
-              "\{mode_str} \{type_str} \{entry.id.to_hex()}\t\{display_path}",
+              "\{mode_str} \{type_str} \{entry.id.to_hex()}\t\{quoted_path}",
             )
           }
+        }
       }
     }
     // Recurse if -r is set, or if we need to look deeper for path filters
@@ -519,6 +521,54 @@ fn hex_char_to_int(c : Char) -> Int {
   } else {
     0
   }
+}
+
+///|
+/// C-style quote a path if it contains special characters.
+/// git quotes paths with tabs, newlines, backslashes, double quotes, etc.
+fn c_quote_path(path : String) -> String {
+  let mut needs_quote = false
+  for c in path {
+    if c == '"' ||
+      c == '\\' ||
+      c == '\n' ||
+      c == '\r' ||
+      c == '\t' ||
+      c.to_int() < 0x20 ||
+      c.to_int() >= 0x7f {
+      needs_quote = true
+      break
+    }
+  }
+  if not(needs_quote) {
+    return path
+  }
+  let buf = StringBuilder::new()
+  buf.write_char('"')
+  for c in path {
+    if c == '"' {
+      buf.write_string("\\\"")
+    } else if c == '\\' {
+      buf.write_string("\\\\")
+    } else if c == '\n' {
+      buf.write_string("\\n")
+    } else if c == '\r' {
+      buf.write_string("\\r")
+    } else if c == '\t' {
+      buf.write_string("\\t")
+    } else if c.to_int() < 0x20 || c.to_int() >= 0x7f {
+      // Octal escape
+      let v = c.to_int()
+      buf.write_char('\\')
+      buf.write_char((((v >> 6) & 7) + '0'.to_int()).unsafe_to_char())
+      buf.write_char((((v >> 3) & 7) + '0'.to_int()).unsafe_to_char())
+      buf.write_char(((v & 7) + '0'.to_int()).unsafe_to_char())
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.write_char('"')
+  buf.to_string()
 }
 
 ///|

@@ -122,9 +122,13 @@ fn get_commit_tree_ident(
   name_env : String,
   email_env : String,
 ) -> (String, String) {
-  let mut name = @sys.get_env_var(name_env).unwrap_or("")
-  let mut email = @sys.get_env_var(email_env).unwrap_or("")
-  if name == "" || email == "" {
+  let name_from_env = @sys.get_env_var(name_env)
+  let email_from_env = @sys.get_env_var(email_env)
+  let mut name = name_from_env.unwrap_or("")
+  let mut email = email_from_env.unwrap_or("")
+  let name_set = name_from_env is Some(_)
+  let email_set = email_from_env is Some(_)
+  if (not(name_set) && name == "") || (not(email_set) && email == "") {
     let config_path = git_dir + "/config"
     if fs.is_file(config_path) {
       let content = decode_bytes(
@@ -144,7 +148,7 @@ fn get_commit_tree_ident(
           continue
         }
         if in_user {
-          if name == "" && line.has_prefix("name") {
+          if not(name_set) && name == "" && line.has_prefix("name") {
             match line.find("=") {
               Some(idx) =>
                 name = trim_chars(
@@ -158,7 +162,7 @@ fn get_commit_tree_ident(
               None => ()
             }
           }
-          if email == "" && line.has_prefix("email") {
+          if not(email_set) && email == "" && line.has_prefix("email") {
             match line.find("=") {
               Some(idx) =>
                 email = trim_chars(

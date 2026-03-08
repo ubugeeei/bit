@@ -272,50 +272,18 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
         @sys.exit(128)
       }
       let requested = args[process_index + 1]
-      let result = match path_format {
-        Some("absolute") => {
-          let abs = if abs_git_dir.has_suffix("/") {
-            abs_git_dir + requested
-          } else {
-            abs_git_dir + "/" + requested
-          }
-          abs
-        }
-        Some("relative") => {
-          let abs = if abs_git_dir.has_suffix("/") {
-            abs_git_dir + requested
-          } else {
-            abs_git_dir + "/" + requested
-          }
-          rev_parse_make_relative(abs, cwd_abs)
-        }
-        _ => rev_parse_resolve_git_path(cwd_abs, git_dir, requested)
-      }
+      let result = rev_parse_resolve_git_path_with_config(
+        fs, cwd_abs, git_dir, abs_git_dir, requested, path_format,
+      )
       print_line(result)
       process_index += 2
       continue
     }
     if arg.has_prefix("--git-path=") {
       let requested = String::unsafe_substring(arg, start=11, end=arg.length())
-      let result = match path_format {
-        Some("absolute") => {
-          let abs = if abs_git_dir.has_suffix("/") {
-            abs_git_dir + requested
-          } else {
-            abs_git_dir + "/" + requested
-          }
-          abs
-        }
-        Some("relative") => {
-          let abs = if abs_git_dir.has_suffix("/") {
-            abs_git_dir + requested
-          } else {
-            abs_git_dir + "/" + requested
-          }
-          rev_parse_make_relative(abs, cwd_abs)
-        }
-        _ => rev_parse_resolve_git_path(cwd_abs, git_dir, requested)
-      }
+      let result = rev_parse_resolve_git_path_with_config(
+        fs, cwd_abs, git_dir, abs_git_dir, requested, path_format,
+      )
       print_line(result)
       process_index += 1
       continue
@@ -921,6 +889,65 @@ fn rev_parse_display_git_dir(
   }
   // When in a subdirectory, --git-dir returns absolute path
   git_dir
+}
+
+///|
+fn rev_parse_resolve_git_path_with_config(
+  fs : &@bitcore.RepoFileSystem,
+  cwd_abs : String,
+  git_dir : String,
+  abs_git_dir : String,
+  requested_path : String,
+  path_format : String?,
+) -> String {
+  // Handle core.hooksPath override for hooks/ paths
+  if requested_path == "hooks" || requested_path.has_prefix("hooks/") {
+    let config_path = git_dir + "/config"
+    let hooks_path = get_config_value(
+      fs,
+      config_path,
+      "core.hookspath",
+      None,
+      false,
+    ) catch {
+      _ => None
+    }
+    match hooks_path {
+      Some(custom_hooks) => {
+        let suffix = if requested_path.length() > 5 {
+          String::unsafe_substring(
+            requested_path,
+            start=5,
+            end=requested_path.length(),
+          )
+        } else {
+          ""
+        }
+        return custom_hooks + suffix
+      }
+      None => ()
+    }
+  }
+  // Fall through to normal resolution
+  match path_format {
+    Some("absolute") => {
+      let abs = if abs_git_dir.has_suffix("/") {
+        abs_git_dir + requested_path
+      } else {
+        abs_git_dir + "/" + requested_path
+      }
+      abs
+    }
+    Some("relative") => {
+      let abs = if abs_git_dir.has_suffix("/") {
+        abs_git_dir + requested_path
+      } else {
+        abs_git_dir + "/" + requested_path
+      }
+      rev_parse_make_relative(abs, cwd_abs)
+    }
+    _ => rev_parse_resolve_git_path(cwd_abs, git_dir, requested_path)
+  }
 }
 
 ///|

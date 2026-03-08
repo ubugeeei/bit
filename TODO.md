@@ -1,35 +1,78 @@
 # TODO (Active Only)
 
-最終整理日: 2026-03-03
+最終整理日: 2026-03-08
 方針: 完了ログは一旦外し、未完了タスクのみ管理する。
 現バージョン: v0.26.3
-allowlist: 990 テスト
+allowlist: 906 テスト（重複除去済み）
+CI 失敗: **105/906** (2026-03-08, commit b85e6c5)
 
-## P0: Git compatibility / 計測
+## P0: Git compatibility — CI 失敗削減
 
-- [x] multi-pack-index の崩れを修正する（2026-02-27）
-  - [x] t5317 filter-objects: `--filter` unsupported フラグ除去（33/33）
-  - [x] t5310 pack-bitmaps: --local/--honor-pack-keep, trace2, bitmap 破損検知（233/233）
-  - [x] t5332 multi-pack-reuse: trace2 data イベント, OFS_DELTA クロスパック判定（14/14）
-  - [x] t5316 delta-depth: index-pack --fix-thin 許可, trace2 region イベント（5/5）
-  - [x] bitmap/rev 生成検証: pack-reused カウント修正（単一パック bitmap フォールバック）
-  - [x] `rev-list --test-bitmap`: 単一パック bitmap フォールバック追加（2026-02-27）
-  - [x] incremental layer/relink（2026-02-27）
-- [x] allowlist/full の全流し再計測を実施する（2026-02-27, CI 5 shard 全通過）
-- [x] SHIM_STRICT=1 known breakage 6→0 修正（2026-02-27）
-  - [x] t5300 #40: pack-objects sort + 1 MiB packSizeLimit clamp
-  - [x] t5302 #20/#23/#26: delta reuse / corruption propagation（type-only stable sort）
-  - [x] t5510 #187: index-pack --fix-thin に外部ベースオブジェクト追加 + pack_path 対応
-  - [x] t5510 #188: fix-thin パック再生成で REF_DELTA 解消
-  - [x] lib-bitmap `setup midx with base from later pack` (2 tests) — size descending ソート追加で修正（2026-02-27）
-- [x] pack-objects repack フラグ実装（2026-03-02, v0.26.0）
-  - [x] `--reflog`, `--non-empty`, `--indexed-objects` 実装
-  - [x] `--unpack-unreachable`, `--keep-pack` 等 no-op 受け入れ
-  - [x] t7700-repack allowlist 追加（4テスト `!BIT_PACK_OBJECTS` prereq skip）
+### Easy Wins (1-2 failures, 高ROI)
+
+- [ ] **t6006-rev-list-format.sh** (1/80) — empty email formatting
+- [ ] **t3200-branch.sh** (1/167) — reflog with `core.logAllRefUpdates=false`
+- [ ] **t6120-describe.sh** (1/103) — misnamed annotated tag forces long output
+- [ ] **t6002-rev-list-bisect.sh** (1/53) — `--bisect` default refs
+- [ ] **t8008-blame-formats.sh** (1/5) — porcelain subject detection
+- [ ] **t1350-config-hooks-path.sh** (1/4) — `--git-path hooks`
+- [ ] **t3300-funny-names.sh** (1/21) — ls-tree quoting
+- [ ] **t0090-cache-tree.sh** (1/22) — write-tree cache-tree
+- [ ] **t7102-reset.sh** (1/38) — `reset -N` intent-to-add
+- [ ] **t4010-diff-pathspec.sh** (1/17) — multiple wildcard pathspecs
+- [ ] **t5318-commit-graph.sh** (1/109) — stale commit parse
+- [ ] **t2203-add-intent.sh** (1/19) — cache-tree empty dir
+
+### 中規模 (数テスト修正で解消見込み)
+
+- [ ] **t6300-for-each-ref.sh** (11/428) — signatures, `contents:body` signed tag, `trailers:separator=`
+- [ ] **t1400-update-ref.sh** (4/313) — date-based reflog `main@{date}:F`, per-worktree refs
+- [ ] **t1500-rev-parse.sh** (4/81) — `--path-format`, `--show-ref-format`, superproject
+- [ ] **t6101-rev-parse-parents.sh** (9/38) — `^@`, `^!`, `^-` parent suffix
+- [ ] **t7700-repack.sh** (5/47) — alternate ODB, `--filter-to`, pending objects
+- [ ] **t5510-fetch.sh** (4/215) — atomic fetch, branch merge config
+
+### 大規模カテゴリ (横断的な対応が必要)
+
+#### rev-parse 拡張 (~45 failures)
+- [ ] **t1506-rev-parse-diagnosis.sh** (22/30) — pathspec/revision 曖昧性解消、`--` handling
+- [ ] **t1512-rev-parse-disambiguation.sh** (23/35) — ambiguous object resolution
+
+#### Merge engine (~57 failures)
+- [ ] **t6416-recursive-corner-cases.sh** (13/37) — criss-cross merge
+- [ ] **t6422-merge-rename-corner-cases.sh** (14/19) — rename/add conflict
+- [ ] **t6423-merge-rename-directories.sh** (17/80) — directory rename
+- [ ] **t6424-merge-unrelated-index-changes.sh** (11/19) — index preservation
+
+#### Reftable / Ref Storage (~42 failures)
+- [ ] **t0610-reftable-basics.sh** (14/91)
+- [ ] **t1460-refs-migrate.sh** (25/37)
+
+#### hash-object / Object Validation (~118 failures)
+- [ ] **t1451-fsck-buffer.sh** (62/72) — truncated commit fsck
+- [ ] **t1006-cat-file.sh** (31/420) — commit size/content, `--batch`
+- [ ] **t1007-hash-object.sh** (17/40) — `--stdin`, `--path`, `--no-filters`
+
+#### Sparse Checkout / Index (~36 failures)
+- [ ] **t1092-sparse-checkout-compatibility.sh** (14/102)
+- [ ] **t7002-mv-sparse-checkout.sh** (14/22)
+- [ ] **t3903-stash.sh** (13/140)
+
+### スコープ外
+
+- **t1016-compatObjectFormat.sh** (181/202) — SHA-256 compat
+- **t9700-perl-git.sh** — Perl Git.pm
+- **t7510/t7528** — GPG/SSH 署名検証 (外部ツール依存)
+
+### 最近の成果
+
+- [x] **t6018-rev-list-glob.sh** — `--branches/--tags/--remotes/--glob/--all/--exclude` (2026-03-08)
+- [x] **t1508-at-combinations.sh** — bare `@{N}`, reflog boundary, empty reflog (2026-03-08)
+- [x] **t1503-rev-parse-verify.sh** — quiet flag, dot-separated dates (2026-03-08)
+- [x] **t6302-for-each-ref-filter.sh** — `contents:lines=N` signature exclusion (2026-03-08)
+- [x] pack-objects repack フラグ実装（2026-03-02）
 - [x] t1517-outside-repo allowlist 追加（2026-03-02）
-  - [x] `pack-redundant -h` 出力不一致 → expect_failure 追加、`upload-pack` 除外
 - [x] known-breakage パッチを `!BIT_PACK_OBJECTS` prereq skip 方式に統一（2026-03-02）
-  - [x] t0411, t5616, t7700, t7703 全て prereq skip に変更
 
 ## P1: Relay / P2P collaboration
 
