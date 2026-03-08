@@ -509,6 +509,14 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
               }
             None => rev_arg
           }
+          // Handle ^@, ^!, ^- parent suffixes (multi-output)
+          if rev_parse_handle_parent_suffix(
+              fs, git_dir, rev_arg, effective_arg, symbolic_full_name, short_length,
+              output_object_format, quiet, revs_only,
+            ) {
+            process_index += 1
+            continue
+          }
           let id = if effective_arg.find("@{") is Some(_) {
             match resolve_upstream_push_oid(fs, git_dir, effective_arg, quiet) {
               Some(oid) => Some(oid)
@@ -780,6 +788,14 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
         let effective_arg = match prefix {
           Some(p) => rev_parse_apply_prefix_to_colon_path(effective_arg0, p)
           None => effective_arg0
+        }
+        // Handle ^@, ^!, ^- parent suffixes (multi-output)
+        if rev_parse_handle_parent_suffix(
+            fs, git_dir, arg, effective_arg, symbolic_full_name, short_length, output_object_format,
+            quiet, revs_only,
+          ) {
+          process_index += 1
+          continue
         }
         if abbrev_ref {
           let name = resolve_abbrev_ref_name(fs, git_dir, effective_arg)
@@ -3492,6 +3508,223 @@ fn rev_parse_list_matching_refs(
   // Sort by refname for deterministic output
   result.sort_by(fn(a, b) { lexicographic_compare(a.0, b.0) })
   result
+}
+
+///|
+/// Parse parent suffix: ^@, ^!, ^-N from the end of a revision spec.
+/// Returns (base_spec, suffix_type) or None if no parent suffix found.
+/// suffix_type: "@" for ^@, "!" for ^!, "-N" for ^-N (N >= 1)
+fn rev_parse_parse_parent_suffix(spec : String) -> (String, String)? {
+  // Check for ^@ suffix
+  if spec.has_suffix("^@") && spec.length() > 2 {
+    let base = String::unsafe_substring(spec, start=0, end=spec.length() - 2)
+    return Some((base, "@"))
+  }
+  // Check for ^! suffix
+  if spec.has_suffix("^!") && spec.length() > 2 {
+    let base = String::unsafe_substring(spec, start=0, end=spec.length() - 2)
+    return Some((base, "!"))
+  }
+  // Check for ^-N or ^- suffix
+  // Find last ^- in the spec
+  let chars = spec.to_array()
+  let len = chars.length()
+  // Search backwards for "^-"
+  for i = len - 1; i >= 1; i = i - 1 {
+    if chars[i - 1] == '^' && chars[i] == '-' {
+      let base = String::unsafe_substring(spec, start=0, end=i - 1)
+      if base.length() == 0 {
+        return None
+      }
+      let rest = String::unsafe_substring(spec, start=i + 1, end=len)
+      if rest.length() == 0 {
+        // ^- means ^-1
+        return Some((base, "-1"))
+      }
+      // Check rest is all digits
+      let mut all_digits = true
+      for c in rest {
+        if c < '0' || c > '9' {
+          all_digits = false
+          break
+        }
+      }
+      if all_digits {
+        return Some((base, "-" + rest))
+      }
+      // Contains non-digit after ^-N: invalid (e.g., ^-1x, ^-^)
+      return Some((base, "-invalid:" + rest))
+    }
+  }
+  None
+}
+
+///|
+/// Get commit parents for a given OID.
+async fn rev_parse_get_commit_parents(
+  fs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  oid : @bitcore.ObjectId,
+) -> Array[@bitcore.ObjectId] raise Error {
+  let db = @bitlib.ObjectDb::load(fs, git_dir)
+  let obj = db.get(fs, oid)
+  guard obj is Some(o) else { return [] }
+  if o.obj_type != @bitcore.ObjectType::Commit {
+    return []
+  }
+  let info = @bitcore.parse_commit(o.data)
+  info.parents
+}
+
+///|
+/// Handle ^@, ^!, ^- parent suffixes. Returns true if handled.
+async fn rev_parse_handle_parent_suffix(
+  fs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  arg : String,
+  effective_arg : String,
+  symbolic_full_name : Bool,
+  short_length : Int?,
+  output_object_format : String?,
+  quiet : Bool,
+  revs_only : Bool,
+) -> Bool raise Error {
+  let parsed = rev_parse_parse_parent_suffix(effective_arg)
+  guard parsed is Some((base_spec, suffix_type)) else { return false }
+  // Resolve the base revision
+  let base_id = @bitrepo.rev_parse(fs, git_dir, base_spec)
+  if suffix_type == "@" {
+    // ^@ = all parents
+    guard base_id is Some(oid) else {
+      if not(quiet) && not(revs_only) {
+        eprint_line("fatal: bad revision '\{arg}'")
+        @sys.exit(128)
+      }
+      return true
+    }
+    let parents = rev_parse_get_commit_parents(fs, git_dir, oid)
+    if parents.length() == 0 {
+      // tree object or root commit - error
+      if not(quiet) && not(revs_only) {
+        eprint_line("fatal: bad revision '\{arg}'")
+        @sys.exit(128)
+      }
+      return true
+    }
+    if symbolic_full_name {
+      // Symbolic: output base^1, base^2, etc.
+      for i = 0; i < parents.length(); i = i + 1 {
+        print_line("\{base_spec}^\{i + 1}")
+      }
+    } else {
+      for parent in parents {
+        let hex = rev_parse_resolve_output_oid_hex(
+          fs, git_dir, parent, output_object_format,
+        )
+        match short_length {
+          Some(length) => print_line(shorten_oid_hex(hex, length))
+          None => print_line(hex)
+        }
+      }
+    }
+    return true
+  }
+  if suffix_type == "!" {
+    // ^! = commit itself, then ^parent1 ^parent2 ...
+    guard base_id is Some(oid) else {
+      if not(quiet) && not(revs_only) {
+        eprint_line("fatal: bad revision '\{arg}'")
+        @sys.exit(128)
+      }
+      return true
+    }
+    let parents = rev_parse_get_commit_parents(fs, git_dir, oid)
+    if symbolic_full_name {
+      print_line(base_spec)
+      for i = 0; i < parents.length(); i = i + 1 {
+        print_line("^\{base_spec}^\{i + 1}")
+      }
+    } else {
+      let hex = rev_parse_resolve_output_oid_hex(
+        fs, git_dir, oid, output_object_format,
+      )
+      match short_length {
+        Some(length) => print_line(shorten_oid_hex(hex, length))
+        None => print_line(hex)
+      }
+      for parent in parents {
+        let phex = rev_parse_resolve_output_oid_hex(
+          fs, git_dir, parent, output_object_format,
+        )
+        match short_length {
+          Some(length) => print_line("^" + shorten_oid_hex(phex, length))
+          None => print_line("^" + phex)
+        }
+      }
+    }
+    return true
+  }
+  if suffix_type.has_prefix("-") {
+    // ^-N = base^N..base
+    let n_str = String::unsafe_substring(
+      suffix_type,
+      start=1,
+      end=suffix_type.length(),
+    )
+    // Check for invalid suffix (garbage after ^-N)
+    if n_str.has_prefix("invalid:") {
+      eprint_line("fatal: bad revision '\{arg}'")
+      @sys.exit(128)
+      return true
+    }
+    let mut n = 0
+    for c in n_str {
+      n = n * 10 + (c.to_int() - '0'.to_int())
+    }
+    if n == 0 {
+      eprint_line("fatal: bad revision '\{arg}'")
+      @sys.exit(128)
+      return true
+    }
+    guard base_id is Some(oid) else {
+      if not(quiet) && not(revs_only) {
+        eprint_line("fatal: bad revision '\{arg}'")
+        @sys.exit(128)
+      }
+      return true
+    }
+    let parents = rev_parse_get_commit_parents(fs, git_dir, oid)
+    if n > parents.length() {
+      eprint_line("fatal: bad revision '\{arg}'")
+      @sys.exit(128)
+      return true
+    }
+    let parent_id = parents[n - 1]
+    // ^-N = base^N..base = base ^base^N
+    if symbolic_full_name {
+      print_line("^\{base_spec}^\{n}")
+      print_line(base_spec)
+    } else {
+      let phex = rev_parse_resolve_output_oid_hex(
+        fs, git_dir, parent_id, output_object_format,
+      )
+      let hex = rev_parse_resolve_output_oid_hex(
+        fs, git_dir, oid, output_object_format,
+      )
+      match short_length {
+        Some(length) => {
+          print_line("^" + shorten_oid_hex(phex, length))
+          print_line(shorten_oid_hex(hex, length))
+        }
+        None => {
+          print_line("^" + phex)
+          print_line(hex)
+        }
+      }
+    }
+    return true
+  }
+  false
 }
 
 ///|
