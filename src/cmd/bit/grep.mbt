@@ -2086,7 +2086,13 @@ fn grep_submodule_relative_paths(
     }
     if path.has_prefix(submodule_prefix) {
       hits = true
-      matched.push(path[submodule_prefix.length():].to_string())
+      matched.push(
+        String::unsafe_substring(
+          path,
+          start=submodule_prefix.length(),
+          end=path.length(),
+        ),
+      )
     }
   }
   if hits {

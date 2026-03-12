@@ -218,17 +218,22 @@ fn sparse_normalize_cone_pattern(pattern : String) -> String? {
     return None
   }
   let without_bang = if trimmed.has_prefix("!") {
-    trimmed[1:].to_string()
+    String::unsafe_substring(trimmed, start=1, end=trimmed.length())
   } else {
     trimmed
   }
   let without_leading = if without_bang.has_prefix("/") {
-    without_bang[1:].to_string()
+    String::unsafe_substring(without_bang, start=1, end=without_bang.length())
   } else {
     without_bang
   }
-  let normalized = if without_leading.has_suffix("/") && without_leading.length() > 1 {
-    without_leading[:without_leading.length() - 1].to_string()
+  let normalized = if without_leading.has_suffix("/") &&
+    without_leading.length() > 1 {
+    String::unsafe_substring(
+      without_leading,
+      start=0,
+      end=without_leading.length() - 1,
+    )
   } else {
     without_leading
   }
@@ -245,6 +250,18 @@ fn sparse_cone_is_descendant(path : String, parent : String) -> Bool {
 }
 
 ///|
+fn sparse_is_stored_cone_pattern(pattern : String) -> Bool {
+  let trimmed = sparse_trim(pattern)
+  if trimmed == "/*" || trimmed == "!/*/" {
+    return true
+  }
+  if trimmed.has_prefix("!/") {
+    return trimmed.has_suffix("/*/") && trimmed.length() > 4
+  }
+  trimmed.has_prefix("/") && trimmed.has_suffix("/") && trimmed.length() > 2
+}
+
+///|
 fn sparse_canonicalize_cone_patterns(patterns : Array[String]) -> Array[String] {
   let canonical : Array[String] = []
   for pattern in patterns {
@@ -254,7 +271,8 @@ fn sparse_canonicalize_cone_patterns(patterns : Array[String]) -> Array[String] 
         let mut covered = false
         let kept : Array[String] = []
         for existing in canonical {
-          if existing == normalized || sparse_cone_is_descendant(normalized, existing) {
+          if existing == normalized ||
+            sparse_cone_is_descendant(normalized, existing) {
             covered = true
           }
           if existing != normalized &&
@@ -284,16 +302,7 @@ fn sparse_patterns_use_cone_mode(patterns : Array[String]) -> Bool {
     return false
   }
   for pattern in patterns {
-    if pattern == "/*" || pattern == "!/*/" {
-      continue
-    }
-    if pattern.has_prefix("!") {
-      if !pattern.has_prefix("!/") || !pattern.has_suffix("/*/") {
-        return false
-      }
-      continue
-    }
-    if sparse_normalize_cone_pattern(pattern) == None {
+    if !sparse_is_stored_cone_pattern(pattern) {
       return false
     }
   }
@@ -392,7 +401,11 @@ pub fn read_sparse_display_patterns(
       continue
     }
     if pattern.has_prefix("!/") && pattern.has_suffix("/*/") {
-      let normalized = pattern[2:pattern.length() - 3].to_string()
+      let normalized = String::unsafe_substring(
+        pattern,
+        start=2,
+        end=pattern.length() - 3,
+      )
       if normalized.length() > 0 {
         exclude_children[normalized] = true
       }
@@ -812,7 +825,7 @@ fn sparse_parent_dirs(path : String) -> Array[String] {
     if slash <= 0 {
       break
     }
-    current = current[:slash].to_string()
+    current = String::unsafe_substring(current, start=0, end=slash)
     if current.length() > 0 && not(out.contains(current)) {
       out.push(current)
     }
@@ -972,12 +985,12 @@ fn sparse_update_worktree(
           continue
         }
         if sparse_worktree_matches_index_entry(
-          rfs,
-          root,
-          entry.path,
-          entry,
-          autocrlf,
-        ) {
+            rfs,
+            root,
+            entry.path,
+            entry,
+            autocrlf,
+          ) {
           continue
         }
         protected_skip_paths[entry.path] = true

@@ -807,6 +807,23 @@ async fn handle_rev_parse(args : Array[String]) -> Unit raise Error {
         }
         exclude_patterns.clear()
       }
+      "--glob" =>
+        match rev_parse_detached_glob_pattern(args, process_index) {
+          Some(pat) => {
+            let refs = rev_parse_list_matching_refs(
+              fs,
+              git_dir,
+              "",
+              Some(pat),
+              exclude_patterns,
+            )
+            for r in refs {
+              rev_parse_output_ref(r, symbolic_full_name_active, short_length)
+            }
+            process_index += 1
+          }
+          None => ()
+        }
       _ if arg.has_prefix("--glob=") => {
         let raw_pat = String::unsafe_substring(arg, start=7, end=arg.length())
         let pat = rev_parse_normalize_glob_pattern(raw_pat)
@@ -4181,4 +4198,15 @@ fn rev_parse_normalize_glob_pattern(pattern : String) -> String {
   } else {
     "refs/" + pattern
   }
+}
+
+///|
+fn rev_parse_detached_glob_pattern(args : Array[String], idx : Int) -> String? {
+  if idx < 0 || idx >= args.length() || args[idx] != "--glob" {
+    return None
+  }
+  if idx + 1 >= args.length() || args[idx + 1].has_prefix("-") {
+    return None
+  }
+  Some(rev_parse_normalize_glob_pattern(args[idx + 1]))
 }

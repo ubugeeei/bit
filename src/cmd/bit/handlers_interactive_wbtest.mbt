@@ -103,3 +103,34 @@ async test "interactive: commit message editor callback is invoked" {
     _ => ()
   }
 }
+
+///|
+async test "interactive: allow-empty-message keeps blank editor result" {
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-commit-editor-empty-" +
+    get_current_timestamp().to_string()
+  fs.mkdir_p(root + "/.git")
+  let editor = Some(async fn(path : String) -> Bool raise Error {
+    ignore(fs.read_file(path))
+    true
+  })
+  let message = read_commit_message_from_editor(
+    fs,
+    root,
+    allow_empty_message=true,
+    editor~,
+  )
+  match message {
+    Some(text) => assert_eq(text, "")
+    None => fail("expected empty commit message")
+  }
+  fs.remove_file(root + "/.git/COMMIT_EDITMSG") catch {
+    _ => ()
+  }
+  fs.remove_dir(root + "/.git") catch {
+    _ => ()
+  }
+  fs.remove_dir(root) catch {
+    _ => ()
+  }
+}

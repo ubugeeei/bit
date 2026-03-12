@@ -9,3 +9,187 @@ test "split_cmdline quote validation" {
   assert_false(split_cmdline_has_unclosed_quote("echo \\\""))
   assert_false(split_cmdline_has_unclosed_quote("--no-ff -m \"ok\""))
 }
+
+///|
+test "merge: strategy options fall back to real git" {
+  assert_true(merge_need_real_git(["-s", "ours", "topic"]))
+  assert_true(merge_need_real_git(["--strategy=ours", "topic"]))
+  assert_true(merge_need_real_git(["-Xtheirs", "topic"]))
+  assert_true(merge_need_real_git(["--strategy-option=theirs", "topic"]))
+  assert_true(merge_need_real_git(["--allow-unrelated-histories", "topic"]))
+  assert_false(merge_need_real_git(["--squash", "topic"]))
+}
+
+///|
+async test "merge: command path supports strategy ours via fallback" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-merge-strategy-ours-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  grep_test_run_git(root, ["init", "--initial-branch=main", "-q", "repo"])
+  grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  grep_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+
+  fs.write_string(repo_dir + "/file", "base\n")
+  grep_test_run_git(repo_dir, ["add", "file"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "base"])
+
+  grep_test_run_git(repo_dir, ["checkout", "-q", "-b", "side"])
+  fs.write_string(repo_dir + "/file", "side\n")
+  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "side"])
+
+  grep_test_run_git(repo_dir, ["checkout", "-q", "main"])
+  fs.write_string(repo_dir + "/file", "main\n")
+  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "main"])
+
+  grep_test_run_git(repo_dir, [
+    "merge", "-q", "-s", "ours", "-m", "ours", "side",
+  ])
+
+  assert_eq(
+    trim_string(grep_test_git_stdout(repo_dir, ["log", "-1", "--format=%s"])),
+    "ours",
+  )
+  assert_eq(decode_bytes(fs.read_file(repo_dir + "/file")), "main\n")
+
+  cleanup_tree(fs, root)
+}
+
+///|
+async test "merge: command path falls back when target is a merge commit" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-merge-merge-target-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
+
+  grep_test_run_git(root, ["init", "--initial-branch=main", "-q", "repo"])
+  grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  grep_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+
+  fs.write_string(repo_dir + "/file", "base\n")
+  grep_test_run_git(repo_dir, ["add", "file"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "I"])
+  grep_test_run_git(repo_dir, ["tag", "I"])
+
+  grep_test_run_git(repo_dir, ["switch", "-q", "-c", "topic"])
+  fs.write_string(repo_dir + "/file", "A\n")
+  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "A"])
+
+  grep_test_run_git(repo_dir, ["switch", "-q", "-c", "branchB", "I"])
+  fs.write_string(repo_dir + "/file", "B\n")
+  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "B"])
+
+  grep_test_run_git(repo_dir, ["switch", "-q", "topic"])
+  let conflict_code = @process.run(
+    "git",
+    ["merge", "-m", "M", "branchB"],
+    inherit_env=true,
+    cwd=repo_dir,
+  )
+  assert_true(conflict_code != 0)
+  fs.write_string(repo_dir + "/file", "A\nB\n")
+  grep_test_run_git(repo_dir, ["add", "file"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "--no-edit"])
+  grep_test_run_git(repo_dir, ["tag", "M"])
+
+  fs.write_string(repo_dir + "/other", "C\n")
+  grep_test_run_git(repo_dir, ["add", "other"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "C"])
+
+  grep_test_run_git(repo_dir, ["switch", "-q", "-c", "branchY", "I"])
+  fs.write_string(repo_dir + "/file", "Y\n")
+  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "Y"])
+
+  grep_test_run_git(repo_dir, ["switch", "-q", "-c", "branchR", "M"])
+  grep_test_run_git(repo_dir, [
+    "merge", "-q", "-m", "R", "-Xtheirs", "branchY",
+  ])
+
+  grep_test_run_git(repo_dir, ["switch", "-q", "topic"])
+  @sys.set_env_var("GIT_SHIM_PWD", repo_dir)
+  handle_merge(["-m", "N", "branchR"]) catch {
+    err => fail("handle_merge failed: \{err}")
+  }
+
+  assert_eq(
+    trim_string(grep_test_git_stdout(repo_dir, ["log", "-1", "--format=%s"])),
+    "N",
+  )
+
+  match prev_shim_pwd {
+    Some(value) => @sys.set_env_var("GIT_SHIM_PWD", value)
+    None => @sys.unset_env_var("GIT_SHIM_PWD")
+  }
+  cleanup_tree(fs, root)
+}
+
+///|
+async test "merge: --continue records MERGE_HEAD as second parent" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-merge-continue-parents-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
+
+  grep_test_run_git(root, ["init", "--initial-branch=main", "-q", "repo"])
+  grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  grep_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+
+  fs.write_string(repo_dir + "/file", "base\n")
+  grep_test_run_git(repo_dir, ["add", "file"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "I"])
+
+  grep_test_run_git(repo_dir, ["switch", "-q", "-c", "side"])
+  fs.write_string(repo_dir + "/file", "side\n")
+  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "side"])
+
+  grep_test_run_git(repo_dir, ["switch", "-q", "main"])
+  fs.write_string(repo_dir + "/file", "main\n")
+  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "main"])
+
+  @sys.set_env_var("GIT_SHIM_PWD", repo_dir)
+  let conflict_code = @process.run(
+    "git",
+    ["merge", "-m", "merge", "side"],
+    inherit_env=true,
+    cwd=repo_dir,
+  )
+  assert_true(conflict_code != 0)
+
+  let merge_head = decode_bytes(fs.read_file(repo_dir + "/.git/MERGE_HEAD"))
+    |> trim_string
+  fs.write_string(repo_dir + "/file", "main\nside\n")
+  grep_test_run_git(repo_dir, ["add", "file"])
+
+  handle_merge(["--continue"]) catch {
+    err => fail("handle_merge --continue failed: \{err}")
+  }
+
+  let git_dir = repo_dir + "/.git"
+  let head = @bitlib.resolve_head_commit(fs, git_dir).unwrap()
+  let db = @bitlib.ObjectDb::load_lazy(fs, git_dir)
+  let commit_obj = db.get(fs, head).unwrap()
+  let info = @bitcore.parse_commit(commit_obj.data)
+  assert_eq(info.parents.length(), 2)
+  assert_eq(info.parents[1].to_hex(), merge_head)
+  assert_false(fs.is_file(repo_dir + "/.git/MERGE_HEAD"))
+
+  match prev_shim_pwd {
+    Some(value) => @sys.set_env_var("GIT_SHIM_PWD", value)
+    None => @sys.unset_env_var("GIT_SHIM_PWD")
+  }
+  cleanup_tree(fs, root)
+}

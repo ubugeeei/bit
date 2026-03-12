@@ -32,7 +32,7 @@ pub fn check_unsupported_gitattributes(&@types.RepoFileSystem, String) -> String
 
 pub fn checkout(&@types.FileSystem, &@types.RepoFileSystem, String, String, detach? : Bool, update_worktree? : Bool, update_index? : Bool) -> @object.ObjectId raise @object.GitError
 
-pub fn cherry_pick(&@types.FileSystem, &@types.RepoFileSystem, String, @object.ObjectId, String, Int64) -> CherryPickResult raise @object.GitError
+pub fn cherry_pick(&@types.FileSystem, &@types.RepoFileSystem, String, @object.ObjectId, String, Int64, allow_empty? : Bool) -> CherryPickResult raise @object.GitError
 
 pub fn clean_for_storage(Bytes, FileEolAttrs, AutoCrlf) -> Bytes
 
@@ -104,6 +104,10 @@ pub fn diff_trees(&@types.RepoFileSystem, String, @object.ObjectId?, @object.Obj
 
 pub async fn diff_worktree(&@types.RepoFileSystem, String, run_filter_cmd? : FilterCmd) -> Array[DiffFile] raise @object.GitError
 
+pub fn expand_sparse_index_entries(&@types.RepoFileSystem, String, Array[IndexEntry]) -> Array[IndexEntry] raise @object.GitError
+
+pub fn expand_sparse_skip_worktree_paths(&@types.RepoFileSystem, String, Array[IndexEntry], Map[String, Bool]) -> Map[String, Bool] raise @object.GitError
+
 pub fn fast_forward_to(&@types.FileSystem, &@types.RepoFileSystem, String, @object.ObjectId) -> Unit raise @object.GitError
 
 pub fn find_tree_entry(ObjectDb, &@types.RepoFileSystem, @object.ObjectId, String) -> @object.TreeEntry? raise @object.GitError
@@ -151,6 +155,8 @@ pub fn is_partial_clone(&@types.RepoFileSystem, String) -> Bool
 pub fn is_rebase_in_progress(&@types.RepoFileSystem, String) -> Bool
 
 pub fn is_remote_namespace(String, String) -> Bool
+
+pub fn is_sparse_checkout_cone_enabled(&@types.RepoFileSystem, String) -> Bool
 
 pub fn is_sparse_checkout_enabled(&@types.RepoFileSystem, String) -> Bool
 
@@ -290,6 +296,8 @@ pub fn read_resolve_undo_entries(&@types.RepoFileSystem, String) -> Array[Resolv
 
 pub fn read_skip_worktree_paths(&@types.RepoFileSystem, String) -> Map[String, Bool]
 
+pub fn read_sparse_display_patterns(&@types.RepoFileSystem, String) -> Array[String] raise @object.GitError
+
 pub fn read_sparse_patterns(&@types.RepoFileSystem, String) -> Array[String] raise @object.GitError
 
 pub fn read_subdir_attributes(&@types.RepoFileSystem, String) -> (String, String, String)?
@@ -404,6 +412,10 @@ pub fn sparse_checkout_set(&@types.FileSystem, &@types.RepoFileSystem, String, A
 
 pub fn sparse_default_patterns() -> Array[String]
 
+pub fn sparse_set_cone_config(&@types.FileSystem, &@types.RepoFileSystem, String, Bool) -> Unit raise @object.GitError
+
+pub fn sparse_set_index_sparse_config(&@types.FileSystem, &@types.RepoFileSystem, String, Bool) -> Unit raise @object.GitError
+
 pub fn split_config_key(String, String) -> (String, String)?
 
 pub fn split_whitespace_all(String) -> Array[String]
@@ -462,7 +474,7 @@ pub fn write_object_bytes(&@types.FileSystem, String, @object.ObjectId, Bytes) -
 
 pub fn write_skip_worktree_paths(&@types.FileSystem, String, Array[String]) -> Unit raise @object.GitError
 
-pub fn write_sparse_patterns(&@types.FileSystem, String, Array[String]) -> Unit raise @object.GitError
+pub fn write_sparse_patterns(&@types.FileSystem, &@types.RepoFileSystem, String, Array[String]) -> Unit raise @object.GitError
 
 pub fn write_subdir_attributes(&@types.FileSystem, String, String, String, @object.ObjectId) -> Unit
 

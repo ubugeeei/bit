@@ -158,7 +158,50 @@ fn is_short_count_flag(arg : String) -> Bool {
 }
 
 ///|
-fn log_need_real_git() -> Bool {
+async fn delegate_log_to_real_git(args : Array[String], cwd : String) -> Unit {
+  let argv : Array[String] = ["log"]
+  for arg in args {
+    argv.push(arg)
+  }
+  let code = @process.run(
+    resolve_real_git_for_dispatch(),
+    argv,
+    inherit_env=true,
+    cwd~,
+    stdin=@stdio.stdin,
+    stdout=@stdio.stdout,
+    stderr=@stdio.stderr,
+  )
+  @sys.exit(code)
+}
+
+///|
+fn log_need_real_git(args : Array[String]) -> Bool {
+  let mut saw_double_dash = false
+  for arg in args {
+    if saw_double_dash {
+      return true
+    }
+    if arg == "--" {
+      saw_double_dash = true
+      continue
+    }
+    if arg == "--name-only" ||
+      arg == "--name-status" ||
+      arg == "--parents" ||
+      arg == "--full-history" ||
+      arg == "--topo-order" ||
+      arg == "--date-order" ||
+      arg == "--author-date-order" ||
+      arg == "--ancestry-path" ||
+      arg == "--simplify-merges" ||
+      arg == "--show-pulls" ||
+      arg == "--exclude-first-parent-only" ||
+      arg == "--full-diff" ||
+      arg.has_prefix("--ancestry-path=") {
+      return true
+    }
+  }
   false
 }
 
@@ -166,7 +209,7 @@ fn log_need_real_git() -> Bool {
 fn log_storage_runtime_delegate_args(
   args : Array[String],
 ) -> @runtime.StorageLogArgs? {
-  if log_need_real_git() {
+  if log_need_real_git(args) {
     return None
   }
   let mut seen_oneline = false
@@ -695,6 +738,12 @@ fn log_add_revision_input(
   range_excludes : Array[String],
   symmetric_ranges : Array[(String, String)],
 ) -> Unit {
+  if arg.has_prefix("^") && arg.length() > 1 {
+    range_excludes.push(
+      String::unsafe_substring(arg, start=1, end=arg.length()),
+    )
+    return
+  }
   let tripledot_idx = log_find_tripledot(arg)
   if tripledot_idx >= 0 {
     let left = String::unsafe_substring(arg, start=0, end=tripledot_idx)
@@ -725,6 +774,58 @@ fn log_add_revision_input(
     return
   }
   revs.push(arg)
+}
+
+///|
+fn log_push_revision_input(
+  arg : String,
+  revs : Array[String],
+  range_excludes : Array[String],
+  symmetric_ranges : Array[(String, String)],
+  exclude_mode : Bool,
+) -> Unit {
+  if arg.has_prefix("^") && arg.length() > 1 {
+    range_excludes.push(
+      String::unsafe_substring(arg, start=1, end=arg.length()),
+    )
+    return
+  }
+  if exclude_mode {
+    range_excludes.push(arg)
+    return
+  }
+  log_add_revision_input(arg, revs, range_excludes, symmetric_ranges)
+}
+
+///|
+fn log_normalize_ref_glob_pattern(pattern : String) -> String {
+  let normalized = rev_parse_normalize_glob_pattern(pattern)
+  if normalized.contains("*") {
+    normalized
+  } else if normalized.has_suffix("/") {
+    normalized + "*"
+  } else {
+    normalized + "/*"
+  }
+}
+
+///|
+fn log_append_glob_targets(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  pattern : String,
+  revs : Array[String],
+) -> Unit {
+  let refs = rev_parse_list_matching_refs(
+    rfs,
+    git_dir,
+    "",
+    Some(log_normalize_ref_glob_pattern(pattern)),
+    [],
+  )
+  for item in refs {
+    revs.push(item.0)
+  }
 }
 
 ///|
@@ -844,6 +945,10 @@ struct CommitFormatData {
   reflog_selector_short : String?
   reflog_selector : String?
   reflog_message : String?
+  reflog_author_name : String?
+  reflog_author_email : String?
+  pretty_color_enabled : Bool
+  pretty_auto_color : String
 }
 
 ///|
@@ -895,6 +1000,10 @@ fn parse_commit_format_data(
   reflog_selector_short? : String? = None,
   reflog_selector? : String? = None,
   reflog_message? : String? = None,
+  reflog_author_name? : String? = None,
+  reflog_author_email? : String? = None,
+  pretty_color_enabled? : Bool = false,
+  pretty_auto_color? : String = "\u001b[33m",
 ) -> CommitFormatData {
   let text = decode_bytes(data)
   let (message_bytes, explicit_encoding) = log_extract_commit_message_and_encoding(
@@ -984,6 +1093,150 @@ fn parse_commit_format_data(
     reflog_selector_short,
     reflog_selector,
     reflog_message,
+    reflog_author_name,
+    reflog_author_email,
+    pretty_color_enabled,
+    pretty_auto_color,
+  }
+}
+
+///|
+fn log_normalize_pretty_color_mode(value : String) -> String? {
+  let trimmed = trim_string(value).to_lower()
+  match trimmed {
+    "always" | "true" | "yes" | "on" => Some("always")
+    "never" | "false" | "no" | "off" | "" => Some("never")
+    "auto" => Some("auto")
+    _ => None
+  }
+}
+
+///|
+fn log_resolve_pretty_color_enabled_from_values(
+  color_diff : String?,
+  color_ui : String?,
+  cli_mode : String?,
+  stdout_is_tty : Bool,
+) -> Bool {
+  let effective_mode = match cli_mode {
+    Some(value) =>
+      match log_normalize_pretty_color_mode(value) {
+        Some(mode) => Some(mode)
+        None => Some("never")
+      }
+    None =>
+      match color_diff {
+        Some(value) =>
+          match log_normalize_pretty_color_mode(value) {
+            Some(mode) => Some(mode)
+            None => None
+          }
+        None =>
+          match color_ui {
+            Some(value) => log_normalize_pretty_color_mode(value)
+            None => None
+          }
+      }
+  }
+  match effective_mode {
+    Some("always") => true
+    Some("auto") => stdout_is_tty
+    _ => false
+  }
+}
+
+///|
+fn log_resolve_pretty_color_enabled(
+  git_dir : String,
+  cli_mode : String?,
+  stdout_is_tty : Bool,
+) -> Bool {
+  let color_diff = match get_config_override("color.diff") {
+    Some(value) => Some(value)
+    None => bit_config_get(git_dir, "color", "diff")
+  }
+  let color_ui = match get_config_override("color.ui") {
+    Some(value) => Some(value)
+    None => bit_config_get(git_dir, "color", "ui")
+  }
+  log_resolve_pretty_color_enabled_from_values(
+    color_diff, color_ui, cli_mode, stdout_is_tty,
+  )
+}
+
+///|
+async fn log_stdout_is_tty() -> Bool {
+  @process.run("sh", ["-c", "test -t 1"], inherit_env=true) == 0
+}
+
+///|
+fn log_parse_pretty_color_directive_text(
+  chars : Array[Char],
+  percent_idx : Int,
+) -> (String, Int)? {
+  if percent_idx + 1 >= chars.length() || chars[percent_idx + 1] != 'C' {
+    return None
+  }
+  if percent_idx + 2 < chars.length() && chars[percent_idx + 2] == '(' {
+    let mut end = percent_idx + 3
+    while end < chars.length() && chars[end] != ')' {
+      end += 1
+    }
+    if end >= chars.length() {
+      return None
+    }
+    return Some((String::from_array(chars[percent_idx + 3:end]), end + 1))
+  }
+  let rest = String::from_array(chars[percent_idx + 2:])
+  for
+    name in [
+      "reset", "normal", "black", "red", "green", "yellow", "blue", "magenta", "cyan",
+      "white",
+    ] {
+    if rest.has_prefix(name) {
+      return Some((name, percent_idx + 2 + name.length()))
+    }
+  }
+  None
+}
+
+///|
+fn log_resolve_pretty_color_directive(
+  spec : String,
+  data : CommitFormatData,
+) -> (String, Int) {
+  let lower = trim_string(spec).to_lower()
+  if lower == "" {
+    return ("", -1)
+  }
+  if lower == "auto" {
+    if data.pretty_color_enabled {
+      return (data.pretty_auto_color, 1)
+    }
+    return ("", -1)
+  }
+  let mut always = false
+  let mut target = lower
+  if lower.has_prefix("auto,") {
+    if not(data.pretty_color_enabled) {
+      return ("", -1)
+    }
+    target = String::unsafe_substring(lower, start=5, end=lower.length())
+  } else if lower.has_prefix("always,") {
+    always = true
+    target = String::unsafe_substring(lower, start=7, end=lower.length())
+  } else if not(data.pretty_color_enabled) {
+    return ("", -1)
+  }
+  if target == "reset" || target == "normal" {
+    if always || data.pretty_color_enabled {
+      return ("\u001b[m", 0)
+    }
+    return ("", -1)
+  }
+  match grep_parse_color_value(target) {
+    Some(ansi) => (ansi, 1)
+    None => ("", -1)
   }
 }
 
@@ -1905,6 +2158,57 @@ fn log_commit_matches_diff_filter(
 }
 
 ///|
+fn log_commit_matches_pathspecs(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  db : @bitlib.ObjectDb,
+  commit_id : @bitcore.ObjectId,
+  pathspecs : Array[String],
+) -> Bool raise Error {
+  if pathspecs.length() == 0 {
+    return true
+  }
+  match log_load_entry(db, rfs, git_dir, commit_id, true) {
+    Some(entry) => {
+      let diff_files = @bitdiff.diff_trees(
+        rfs,
+        git_dir,
+        entry.parent_tree,
+        entry.tree,
+        db~,
+      )
+      for file in diff_files {
+        if diff_path_matches_filters(file.path, pathspecs) {
+          return true
+        }
+      }
+      false
+    }
+    None => false
+  }
+}
+
+///|
+fn log_commit_matches_history_filters(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  db : @bitlib.ObjectDb,
+  commit_id : @bitcore.ObjectId,
+  pathspecs : Array[String],
+  include_bits : Map[String, Bool],
+  exclude : Map[String, Bool],
+  detect_renames : Bool,
+  detect_copies : Bool,
+) -> Bool raise Error {
+  if not(log_commit_matches_pathspecs(rfs, git_dir, db, commit_id, pathspecs)) {
+    return false
+  }
+  log_commit_matches_diff_filter(
+    rfs, git_dir, db, commit_id, include_bits, exclude, detect_renames, detect_copies,
+  )
+}
+
+///|
 priv struct LogRawResult {
   sort_key : String
   old_mode : String
@@ -2349,6 +2653,8 @@ fn log_format_commit_spec(
             spec_idx + 2,
           )
         's' => (data.reflog_message.unwrap_or(""), spec_idx + 2)
+        'n' => (data.reflog_author_name.unwrap_or(""), spec_idx + 2)
+        'e' => (data.reflog_author_email.unwrap_or(""), spec_idx + 2)
         _ => ("%g", spec_idx + 1)
       }
     }
@@ -2430,10 +2736,33 @@ fn format_commit_string(fmt : String, data : CommitFormatData) -> String {
   let mut i = 0
   let mut wrap_spec : LogWrapSpec? = None
   let mut rendered = ""
+  let mut pretty_color_active = false
   while i < len {
     if chars[i] == '%' && i + 1 < len {
       let next = chars[i + 1]
       match next {
+        'C' =>
+          match log_parse_pretty_color_directive_text(chars, i) {
+            Some((spec, next_idx)) => {
+              let (ansi, state_change) = log_resolve_pretty_color_directive(
+                spec, data,
+              )
+              if state_change == 0 {
+                if pretty_color_active {
+                  rendered = rendered + "\u001b[m"
+                  pretty_color_active = false
+                }
+              } else if state_change == 1 {
+                rendered = rendered + ansi
+                pretty_color_active = ansi != ""
+              }
+              i = next_idx
+            }
+            None => {
+              rendered = rendered + "%C"
+              i += 2
+            }
+          }
         'w' if i + 2 < len && chars[i + 2] == '(' => {
           let mut end = i + 3
           while end < len && chars[end] != ')' {
@@ -2497,6 +2826,9 @@ fn format_commit_string(fmt : String, data : CommitFormatData) -> String {
       rendered = rendered + chars[i].to_string()
       i += 1
     }
+  }
+  if pretty_color_active {
+    rendered = rendered + "\u001b[m"
   }
   match wrap_spec {
     Some(spec) => log_apply_wrap(rendered, spec)
@@ -2964,6 +3296,11 @@ fn get_head_commit_message(
 ///|
 async fn handle_log(args : Array[String]) -> Unit raise Error {
   let root = get_work_root()
+  let cwd = @env.current_dir().unwrap_or(root)
+  if log_need_real_git(args) {
+    delegate_log_to_real_git(args, cwd)
+    return
+  }
   let fs = OsFs::new()
   let rfs : &@bitcore.RepoFileSystem = fs
   let git_dir = resolve_git_dir(fs, root)
@@ -3018,6 +3355,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
   let author_patterns : Array[String] = []
   let committer_patterns : Array[String] = []
   let mut format : String? = None
+  let mut pretty_color_cli_mode : String? = None
   let decoration_include_patterns : Array[String] = []
   let decoration_exclude_patterns : Array[String] = []
   let mut clear_decorations = false
@@ -3028,14 +3366,24 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
   let revs : Array[String] = []
   let range_excludes : Array[String] = []
   let symmetric_ranges : Array[(String, String)] = []
+  let pathspecs : Array[String] = []
   let mut saw_revision_input = false
   let mut end_of_options = false
+  let mut pathspec_mode = false
+  let mut not_mode = false
   let mut i = 0
   while i < args.length() {
     let arg = args[i]
+    if pathspec_mode {
+      pathspecs.push(arg)
+      i += 1
+      continue
+    }
     if end_of_options {
       saw_revision_input = true
-      log_add_revision_input(arg, revs, range_excludes, symmetric_ranges)
+      log_push_revision_input(
+        arg, revs, range_excludes, symmetric_ranges, not_mode,
+      )
       i += 1
       continue
     }
@@ -3043,6 +3391,8 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
       "--oneline" => oneline = true
       "--graph" => graph = true
       "--all" => all_refs = true
+      "--" => pathspec_mode = true
+      "--not" => not_mode = not(not_mode)
       "--end-of-options" => end_of_options = true
       "--source" => source = true
       "--left-right" => left_right = true
@@ -3056,6 +3406,15 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         branch_patterns.push("*")
         saw_revision_input = true
       }
+      "--glob" if i + 1 < args.length() && not(args[i + 1].has_prefix("-")) => {
+        log_append_glob_targets(rfs, git_dir, args[i + 1], revs)
+        saw_revision_input = true
+        i += 1
+      }
+      "--glob" =>
+        raise @bitcore.GitError::InvalidObject(
+          "Option '--glob' requires a value",
+        )
       "--no-walk" => {
         no_walk = true
         no_walk_unsorted = false
@@ -3160,6 +3519,9 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         format = Some(args[i + 1])
         i += 1
       }
+      "--color" | "--color=always" => pretty_color_cli_mode = Some("always")
+      "--color=auto" => pretty_color_cli_mode = Some("auto")
+      "--no-color" | "--color=never" => pretty_color_cli_mode = Some("never")
       "--pretty" if i + 1 < args.length() => {
         format = Some(args[i + 1])
         i += 1
@@ -3232,6 +3594,15 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         branch_patterns.push((try! arg[11:]).to_string())
         saw_revision_input = true
       }
+      _ if arg.has_prefix("--glob=") => {
+        log_append_glob_targets(
+          rfs,
+          git_dir,
+          String::unsafe_substring(arg, start=7, end=arg.length()),
+          revs,
+        )
+        saw_revision_input = true
+      }
       _ if arg.has_prefix("--abbrev=") => {
         let parsed = @strconv.parse_int((try! arg[9:]).to_string()) catch {
           _ => 7
@@ -3267,26 +3638,87 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
       _ if arg.has_prefix("-") => warn_unimplemented_arg("log", arg)
       _ => {
         saw_revision_input = true
-        log_add_revision_input(arg, revs, range_excludes, symmetric_ranges)
+        log_push_revision_input(
+          arg, revs, range_excludes, symmetric_ranges, not_mode,
+        )
       }
     }
     i += 1
   }
   if stdin_mode {
     let input = decode_bytes(read_all_stdin())
+    let mut stdin_end_of_options = false
+    let mut stdin_pathspec_mode = false
+    let mut stdin_not_mode = false
     for line_view in input.split("\n") {
       let line = trim_string(line_view.to_string())
       if line.length() == 0 || line.has_prefix("#") {
         continue
       }
-      saw_revision_input = true
-      if line.has_prefix("^") {
-        range_excludes.push(
-          String::unsafe_substring(line, start=1, end=line.length()),
-        )
-      } else {
-        log_add_revision_input(line, revs, range_excludes, symmetric_ranges)
+      if stdin_pathspec_mode {
+        pathspecs.push(line)
+        continue
       }
+      if stdin_end_of_options {
+        saw_revision_input = true
+        log_push_revision_input(
+          line, revs, range_excludes, symmetric_ranges, stdin_not_mode,
+        )
+        continue
+      }
+      if line == "--" {
+        stdin_pathspec_mode = true
+        continue
+      }
+      if line == "--end-of-options" {
+        stdin_end_of_options = true
+        continue
+      }
+      if line == "--not" {
+        stdin_not_mode = not(stdin_not_mode)
+        continue
+      }
+      if line == "--all" {
+        all_refs = true
+        saw_revision_input = true
+        continue
+      }
+      if line == "--branches" {
+        branch_patterns.push("*")
+        saw_revision_input = true
+        continue
+      }
+      if line == "--glob" {
+        raise @bitcore.GitError::InvalidObject(
+          "Option '--glob' requires a value",
+        )
+      }
+      if line.has_prefix("--branches=") {
+        branch_patterns.push(
+          String::unsafe_substring(line, start=11, end=line.length()),
+        )
+        saw_revision_input = true
+        continue
+      }
+      if line.has_prefix("--glob=") {
+        log_append_glob_targets(
+          rfs,
+          git_dir,
+          String::unsafe_substring(line, start=7, end=line.length()),
+          revs,
+        )
+        saw_revision_input = true
+        continue
+      }
+      if line.has_prefix("-") && not(line.has_prefix("^")) {
+        raise @bitcore.GitError::InvalidObject(
+          "invalid option '" + line + "' in --stdin mode",
+        )
+      }
+      saw_revision_input = true
+      log_push_revision_input(
+        line, revs, range_excludes, symmetric_ranges, stdin_not_mode,
+      )
     }
   }
   if graph && no_walk {
@@ -3316,6 +3748,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
   let has_commit_filters = log_has_diff_filter(
       diff_filter_include, diff_filter_exclude,
     ) ||
+    pathspecs.length() > 0 ||
     grep_patterns.length() > 0 ||
     author_patterns.length() > 0 ||
     committer_patterns.length() > 0
@@ -3352,6 +3785,15 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     let reflog_oneline = match normalized_reflog_format {
       Some(raw_fmt) => raw_fmt == "oneline"
       None => oneline
+    }
+    let reflog_pretty_color_enabled = match normalized_reflog_format {
+      Some(fmt) if fmt.contains("%C") =>
+        log_resolve_pretty_color_enabled(
+          git_dir,
+          pretty_color_cli_mode,
+          log_stdout_is_tty(),
+        )
+      _ => false
     }
     let reflog_object_git_dir = log_resolve_common_git_dir(rfs, git_dir)
     let reflog_db = @bitlib.ObjectDb::load_lazy(rfs, reflog_object_git_dir)
@@ -3492,6 +3934,9 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
                   reflog_selector_short=Some(gd),
                   reflog_selector=Some(gd),
                   reflog_message=Some(entry.message),
+                  reflog_author_name=Some(entry.author),
+                  reflog_author_email=Some(entry.email),
+                  pretty_color_enabled=reflog_pretty_color_enabled,
                 )
                 format_commit_string(fmt, commit_data)
               }
@@ -3521,6 +3966,15 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
       ("%h %s", true)
     } else {
       (raw_fmt, true)
+    }
+    let pretty_color_enabled = if actual_fmt.contains("%C") {
+      log_resolve_pretty_color_enabled(
+        git_dir,
+        pretty_color_cli_mode,
+        log_stdout_is_tty(),
+      )
+    } else {
+      false
     }
     let warn_missing_exclude_decoration = decoration_include_patterns.length() ==
       0 &&
@@ -3600,9 +4054,9 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
           continue
         }
         if not(
-            log_commit_matches_diff_filter(
-              rfs, git_dir, db, id, diff_filter_include, diff_filter_exclude, detect_renames,
-              detect_copies,
+            log_commit_matches_history_filters(
+              rfs, git_dir, db, id, pathspecs, diff_filter_include, diff_filter_exclude,
+              detect_renames, detect_copies,
             ),
           ) {
           continue
@@ -3637,6 +4091,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
             Some(marker) => marker
             None => ""
           },
+          pretty_color_enabled~,
         )
         formatted_lines.push(format_commit_string(actual_fmt, commit_data))
       }
@@ -3730,11 +4185,12 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
           continue
         }
         if not(
-            log_commit_matches_diff_filter(
+            log_commit_matches_history_filters(
               rfs,
               git_dir,
               db,
               entry.id,
+              pathspecs,
               diff_filter_include,
               diff_filter_exclude,
               detect_renames,
@@ -3773,6 +4229,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
             Some(marker) => marker
             None => ""
           },
+          pretty_color_enabled~,
         )
         formatted_lines.push(format_commit_string(actual_fmt, commit_data))
         if formatted_lines.length() >= max_count {
@@ -3818,6 +4275,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     decoration_exclude_patterns.length() > 0 ||
     clear_decorations ||
     simplify_by_decoration ||
+    pathspecs.length() > 0 ||
     show_raw ||
     no_merges ||
     abbrev_commit ||
@@ -3881,9 +4339,9 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
           continue
         }
         if not(
-            log_commit_matches_diff_filter(
-              rfs, git_dir, db, id, diff_filter_include, diff_filter_exclude, detect_renames,
-              detect_copies,
+            log_commit_matches_history_filters(
+              rfs, git_dir, db, id, pathspecs, diff_filter_include, diff_filter_exclude,
+              detect_renames, detect_copies,
             ),
           ) {
           continue
@@ -3935,9 +4393,9 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
           continue
         }
         if not(
-            log_commit_matches_diff_filter(
-              rfs, git_dir, db, id, diff_filter_include, diff_filter_exclude, detect_renames,
-              detect_copies,
+            log_commit_matches_history_filters(
+              rfs, git_dir, db, id, pathspecs, diff_filter_include, diff_filter_exclude,
+              detect_renames, detect_copies,
             ),
           ) {
           continue
@@ -4163,11 +4621,12 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
           continue
         }
         if not(
-            log_commit_matches_diff_filter(
+            log_commit_matches_history_filters(
               rfs,
               git_dir,
               walk_db,
               entry.id,
+              pathspecs,
               diff_filter_include,
               diff_filter_exclude,
               detect_renames,
@@ -4230,11 +4689,12 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
           continue
         }
         if not(
-            log_commit_matches_diff_filter(
+            log_commit_matches_history_filters(
               rfs,
               git_dir,
               walk_db,
               entry.id,
+              pathspecs,
               diff_filter_include,
               diff_filter_exclude,
               detect_renames,

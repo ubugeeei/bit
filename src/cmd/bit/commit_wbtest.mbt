@@ -110,6 +110,14 @@ test "commit: storage runtime routing handles normal and -a mode" {
 }
 
 ///|
+test "commit: cleanup mode validation honors verbatim" {
+  assert_eq(commit_normalize_cleanup_mode("verbatim"), Some("verbatim"))
+  assert_eq(commit_normalize_cleanup_mode("non-existent"), None)
+  assert_eq(commit_prepare_message_for_validation("\n", "verbatim"), "\n")
+  assert_eq(commit_prepare_message_for_validation("\n", "default"), "")
+}
+
+///|
 async test "commit: pathspec staging updates submodule gitlink entry" {
   @bitnative.init_native_io()
   let fs = OsFs::new()
@@ -167,6 +175,155 @@ async test "commit: pathspec staging updates submodule gitlink entry" {
   let after_entries = @bitlib.read_index_entries(fs, super_dir + "/.git")
   let after_submodule = commit_wbtest_find_entry(after_entries, "submodule")
   assert_eq(after_submodule.id, sub_head)
+
+  cleanup_tree(fs, root)
+}
+
+///|
+async test "commit: amend preserves distinct author and committer dates" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-commit-author-date-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+
+  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
+  let prev_author_name = @sys.get_env_var("GIT_AUTHOR_NAME")
+  let prev_author_email = @sys.get_env_var("GIT_AUTHOR_EMAIL")
+  let prev_committer_name = @sys.get_env_var("GIT_COMMITTER_NAME")
+  let prev_committer_email = @sys.get_env_var("GIT_COMMITTER_EMAIL")
+  let prev_author_date = @sys.get_env_var("GIT_AUTHOR_DATE")
+  let prev_committer_date = @sys.get_env_var("GIT_COMMITTER_DATE")
+
+  commit_wbtest_run_git(root, ["init", "--initial-branch=main", "-q", "."])
+  commit_wbtest_run_git(root, ["config", "user.name", "Test User"])
+  commit_wbtest_run_git(root, ["config", "user.email", "test@example.com"])
+  fs.write_string(root + "/a.txt", "before\n")
+  commit_wbtest_run_git(root, ["add", "a.txt"])
+  commit_wbtest_run_git(root, ["commit", "-q", "-m", "initial"])
+
+  fs.write_string(root + "/a.txt", "after\n")
+  commit_wbtest_run_git(root, ["add", "a.txt"])
+
+  @sys.set_env_var("GIT_SHIM_PWD", root)
+  @sys.set_env_var("GIT_AUTHOR_NAME", "Author User")
+  @sys.set_env_var("GIT_AUTHOR_EMAIL", "author@example.com")
+  @sys.set_env_var("GIT_COMMITTER_NAME", "Committer User")
+  @sys.set_env_var("GIT_COMMITTER_EMAIL", "committer@example.com")
+  @sys.set_env_var("GIT_AUTHOR_DATE", "1112911993 -0700")
+  @sys.set_env_var("GIT_COMMITTER_DATE", "1112912001 +0900")
+
+  handle_commit(["--amend", "-m", "rewritten"]) catch {
+    err => fail("handle_commit failed: \{err}")
+  }
+
+  let git_dir = root + "/.git"
+  let head = @bitlib.resolve_head_commit(fs, git_dir).unwrap()
+  let db = @bitlib.ObjectDb::load_lazy(fs, git_dir)
+  let commit_obj = db.get(fs, head).unwrap()
+  let commit_text = @utf8.decode_lossy(commit_obj.data[:]).to_string()
+  assert_true(
+    commit_text.contains(
+      "author Author User <author@example.com> 1112911993 -0700",
+    ),
+  )
+  assert_true(
+    commit_text.contains(
+      "committer Committer User <committer@example.com> 1112912001 +0900",
+    ),
+  )
+
+  match prev_shim_pwd {
+    Some(value) => @sys.set_env_var("GIT_SHIM_PWD", value)
+    None => @sys.unset_env_var("GIT_SHIM_PWD")
+  }
+  match prev_author_name {
+    Some(value) => @sys.set_env_var("GIT_AUTHOR_NAME", value)
+    None => @sys.unset_env_var("GIT_AUTHOR_NAME")
+  }
+  match prev_author_email {
+    Some(value) => @sys.set_env_var("GIT_AUTHOR_EMAIL", value)
+    None => @sys.unset_env_var("GIT_AUTHOR_EMAIL")
+  }
+  match prev_committer_name {
+    Some(value) => @sys.set_env_var("GIT_COMMITTER_NAME", value)
+    None => @sys.unset_env_var("GIT_COMMITTER_NAME")
+  }
+  match prev_committer_email {
+    Some(value) => @sys.set_env_var("GIT_COMMITTER_EMAIL", value)
+    None => @sys.unset_env_var("GIT_COMMITTER_EMAIL")
+  }
+  match prev_author_date {
+    Some(value) => @sys.set_env_var("GIT_AUTHOR_DATE", value)
+    None => @sys.unset_env_var("GIT_AUTHOR_DATE")
+  }
+  match prev_committer_date {
+    Some(value) => @sys.set_env_var("GIT_COMMITTER_DATE", value)
+    None => @sys.unset_env_var("GIT_COMMITTER_DATE")
+  }
+
+  cleanup_tree(fs, root)
+}
+
+///|
+async test "commit: merge state commit records MERGE_HEAD as second parent" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-commit-merge-heads-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+
+  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
+
+  commit_wbtest_run_git(root, ["init", "--initial-branch=main", "-q", "."])
+  commit_wbtest_run_git(root, ["config", "user.name", "Test User"])
+  commit_wbtest_run_git(root, ["config", "user.email", "test@example.com"])
+
+  fs.write_string(root + "/file", "base\n")
+  commit_wbtest_run_git(root, ["add", "file"])
+  commit_wbtest_run_git(root, ["commit", "-q", "-m", "I"])
+
+  commit_wbtest_run_git(root, ["switch", "-q", "-c", "side"])
+  fs.write_string(root + "/file", "side\n")
+  commit_wbtest_run_git(root, ["commit", "-q", "-am", "side"])
+
+  commit_wbtest_run_git(root, ["switch", "-q", "main"])
+  fs.write_string(root + "/file", "main\n")
+  commit_wbtest_run_git(root, ["commit", "-q", "-am", "main"])
+
+  let conflict_code = @process.run(
+    "git",
+    ["merge", "-m", "merge", "side"],
+    inherit_env=true,
+    cwd=root,
+  )
+  assert_true(conflict_code != 0)
+  let merge_head = decode_bytes(fs.read_file(root + "/.git/MERGE_HEAD"))
+    |> trim_string
+
+  fs.write_string(root + "/file", "main\nside\n")
+  commit_wbtest_run_git(root, ["add", "file"])
+
+  @sys.set_env_var("GIT_SHIM_PWD", root)
+  handle_commit(["-a", "-m", "merge"]) catch {
+    err => fail("handle_commit failed: \{err}")
+  }
+
+  let git_dir = root + "/.git"
+  let head = @bitlib.resolve_head_commit(fs, git_dir).unwrap()
+  let db = @bitlib.ObjectDb::load_lazy(fs, git_dir)
+  let commit_obj = db.get(fs, head).unwrap()
+  let info = @bitcore.parse_commit(commit_obj.data)
+  assert_eq(info.parents.length(), 2)
+  assert_eq(info.parents[1].to_hex(), merge_head)
+  assert_false(fs.is_file(root + "/.git/MERGE_HEAD"))
+
+  match prev_shim_pwd {
+    Some(value) => @sys.set_env_var("GIT_SHIM_PWD", value)
+    None => @sys.unset_env_var("GIT_SHIM_PWD")
+  }
 
   cleanup_tree(fs, root)
 }

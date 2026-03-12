@@ -1,12 +1,47 @@
 ///|
+async fn delegate_rebase_to_real_git(
+  args : Array[String],
+  cwd : String,
+) -> Unit {
+  let argv : Array[String] = ["rebase"]
+  for arg in args {
+    argv.push(arg)
+  }
+  let code = @process.run(
+    resolve_real_git_for_dispatch(),
+    argv,
+    inherit_env=true,
+    cwd~,
+    stdin=@stdio.stdin,
+    stdout=@stdio.stdout,
+    stderr=@stdio.stderr,
+  )
+  @sys.exit(code)
+}
+
+///|
+fn rebase_requires_real_git(args : Array[String]) -> Bool {
+  for arg in args {
+    if arg == "--root" || arg == "--force-rebase" || arg == "--no-force-rebase" {
+      return true
+    }
+  }
+  false
+}
+
+///|
 async fn handle_rebase(args : Array[String]) -> Unit raise Error {
+  let root = get_work_root()
+  if rebase_requires_real_git(args) {
+    delegate_rebase_to_real_git(args, root)
+    return
+  }
   if rebase_args_require_standalone_error(args) {
     eprint_line(
       "fatal: interactive/step rebase mode is not supported in standalone mode",
     )
     @sys.exit(1)
   }
-  let root = get_work_root()
   check_and_exit_unsupported_attrs(root)
   let git_dir = root + "/.git"
   let fs = OsFs::new()

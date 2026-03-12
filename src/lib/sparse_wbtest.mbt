@@ -15,3 +15,9 @@ test "sparse: deep cone pattern includes ancestor files but excludes sibling sub
   assert_false(matches_sparse_pattern("folder2/0/1", patterns))
   assert_false(matches_sparse_pattern("folder2/2/4/a", patterns))
 }
+
+///|
+test "sparse: plain path entries are not treated as stored cone patterns" {
+  assert_false(sparse_patterns_use_cone_mode(["/*", "!/*/", "dir"]))
+  assert_true(sparse_patterns_use_cone_mode(["/*", "!/*/", "/dir/"]))
+}

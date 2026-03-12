@@ -640,6 +640,18 @@ fn get_commit_timestamp() -> Int64 {
 }
 
 ///|
+fn get_author_timestamp() -> Int64 {
+  match @sys.get_env_var("GIT_AUTHOR_DATE") {
+    Some(s) =>
+      match parse_git_env_timestamp(s) {
+        Some(ts) => ts
+        None => get_commit_timestamp()
+      }
+    None => get_commit_timestamp()
+  }
+}
+
+///|
 fn parse_git_env_timestamp(raw : String) -> Int64? {
   let mut token : String? = None
   for part_view in raw.split(" ") {
@@ -770,6 +782,18 @@ fn get_commit_timezone() -> String {
         None => "+0000"
       }
     None => "+0000"
+  }
+}
+
+///|
+fn get_author_timezone() -> String {
+  match @sys.get_env_var("GIT_AUTHOR_DATE") {
+    Some(raw) =>
+      match parse_git_env_timezone(raw) {
+        Some(tz) => tz
+        None => get_commit_timezone()
+      }
+    None => get_commit_timezone()
   }
 }
 

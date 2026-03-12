@@ -1,15 +1,35 @@
 ///|
+fn shortlog_strip_detached_glob_args(args : Array[String]) -> Array[String] {
+  let filtered : Array[String] = []
+  let mut i = 0
+  while i < args.length() {
+    if args[i] == "--glob" {
+      if i + 1 < args.length() {
+        i += 2
+      } else {
+        i += 1
+      }
+      continue
+    }
+    filtered.push(args[i])
+    i += 1
+  }
+  filtered
+}
+
+///|
 async fn handle_shortlog(args : Array[String]) -> Unit raise Error {
   let root = get_work_root()
   let git_dir = root + "/.git"
   let fs = OsFs::new()
   let rfs : &@bitcore.RepoFileSystem = fs
   // Parse options
+  let filtered_args = shortlog_strip_detached_glob_args(args)
   let mut numbered = false
   let mut summary = false
   let mut email = false
   let mut max_count = -1
-  for arg in args {
+  for arg in filtered_args {
     match arg {
       "-n" | "--numbered" => numbered = true
       "-s" | "--summary" => summary = true

@@ -191,6 +191,18 @@ test "rev-parse: normalize path resolves ." {
 }
 
 ///|
+test "rev-parse: detached --glob consumes only non-option argument" {
+  assert_eq(
+    rev_parse_detached_glob_pattern(["--glob", "heads/subspace"], 0),
+    Some("refs/heads/subspace"),
+  )
+  assert_eq(
+    rev_parse_detached_glob_pattern(["--glob", "--symbolic", "main"], 0),
+    None,
+  )
+}
+
+///|
 test "rev-parse: no colon means no prefix applied" {
   assert_eq(rev_parse_apply_prefix_to_colon_path("HEAD", "sub1/"), "HEAD")
 }

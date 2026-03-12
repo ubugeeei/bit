@@ -1,6 +1,33 @@
 ///|
 
 ///|
+fn show_requires_real_git(args : Array[String]) -> Bool {
+  for arg in args {
+    if arg == "--pretty=reference" || arg == "--format=reference" {
+      return true
+    }
+  }
+  false
+}
+
+///|
+async fn delegate_show_to_real_git(args : Array[String]) -> Unit {
+  let argv = ["show"]
+  for arg in args {
+    argv.push(arg)
+  }
+  let code = @process.run(
+    resolve_real_git_for_dispatch(),
+    argv,
+    inherit_env=true,
+    stdin=@stdio.stdin,
+    stdout=@stdio.stdout,
+    stderr=@stdio.stderr,
+  )
+  @sys.exit(code)
+}
+
+///|
 async fn show_show_command_help() -> Unit {
   show_simple_command_help(
     "git show [<options>] [<object>...]",
@@ -606,6 +633,9 @@ fn show_render_object_block(
 
 ///|
 async fn handle_show(args : Array[String]) -> Unit raise Error {
+  if show_requires_real_git(args) {
+    delegate_show_to_real_git(args)
+  }
   let root = get_work_root()
   let fs = OsFs::new()
   let git_dir = resolve_git_dir(fs, root)

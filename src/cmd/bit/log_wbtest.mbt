@@ -94,11 +94,108 @@ test "log: log_find_tripledot parses A...B ranges" {
 }
 
 ///|
+test "log: revision input handles caret and not-mode excludes" {
+  let revs : Array[String] = []
+  let excludes : Array[String] = []
+  let symmetric : Array[(String, String)] = []
+  log_push_revision_input("^topic", revs, excludes, symmetric, false)
+  log_push_revision_input("main", revs, excludes, symmetric, true)
+
+  assert_eq(revs.length(), 0)
+  assert_eq(excludes, ["topic", "main"])
+}
+
+///|
+test "log: ancestry and simplify options fall back to real git" {
+  assert_true(log_need_real_git(["--ancestry-path"]))
+  assert_true(log_need_real_git(["--ancestry-path=topic"]))
+  assert_true(log_need_real_git(["--simplify-merges"]))
+  assert_true(log_need_real_git(["--parents"]))
+  assert_true(log_need_real_git(["--full-history"]))
+  assert_true(log_need_real_git(["--show-pulls"]))
+  assert_true(log_need_real_git(["--exclude-first-parent-only"]))
+  assert_true(log_need_real_git(["--", "file"]))
+  assert_false(log_need_real_git(["--oneline", "HEAD"]))
+}
+
+///|
+test "log: ref glob normalization expands bare namespaces" {
+  assert_eq(log_normalize_ref_glob_pattern("refs/heads"), "refs/heads/*")
+  assert_eq(
+    log_normalize_ref_glob_pattern("heads/topic/*"),
+    "refs/heads/topic/*",
+  )
+}
+
+///|
 test "log: branch pattern matching handles exact and nested names" {
   assert_true(log_branch_pattern_matches("main", "main"))
   assert_true(log_branch_pattern_matches("topic/sub", "topic"))
   assert_true(log_branch_pattern_matches("topic/sub", "topic/*"))
   assert_false(log_branch_pattern_matches("main", "does-not-exist"))
+}
+
+///|
+async test "log: command path supports excludes and pathspec separator" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-log-exclude-pathspec-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  grep_test_run_git(root, ["init", "-q", "repo"])
+  grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  grep_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+
+  fs.write_string(repo_dir + "/file-1", "base\n")
+  fs.write_string(repo_dir + "/file-2", "base\n")
+  grep_test_run_git(repo_dir, ["add", "file-1", "file-2"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "base"])
+
+  fs.write_string(repo_dir + "/file-1", "touch-1\n")
+  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "touch-1"])
+
+  fs.write_string(repo_dir + "/file-2", "touch-2\n")
+  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "touch-2"])
+
+  let stdout = grep_test_git_stdout(repo_dir, [
+    "log", "--format=%s", "HEAD", "^HEAD~1", "--", "file-2",
+  ])
+  assert_eq(trim_string(stdout), "touch-2")
+
+  cleanup_tree(fs, root)
+}
+
+///|
+async test "log: command path supports --all with --not" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-log-all-not-" + get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  grep_test_run_git(root, ["init", "-q", "repo"])
+  grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  grep_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+
+  fs.write_string(repo_dir + "/base.txt", "base\n")
+  grep_test_run_git(repo_dir, ["add", "base.txt"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "base"])
+  grep_test_run_git(repo_dir, ["checkout", "-q", "-b", "side"])
+  fs.write_string(repo_dir + "/side.txt", "side\n")
+  grep_test_run_git(repo_dir, ["add", "side.txt"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "side"])
+  grep_test_run_git(repo_dir, ["checkout", "-q", "main"])
+
+  let stdout = grep_test_git_stdout(repo_dir, [
+    "log", "--format=%s", "--all", "--not", "main",
+  ])
+  assert_eq(trim_string(stdout), "side")
+
+  cleanup_tree(fs, root)
 }
 
 ///|
@@ -169,6 +266,7 @@ fn log_test_format_data(
   body? : String = "",
   message? : String = subject,
   encoding? : String = "",
+  pretty_color_enabled? : Bool = false,
 ) -> CommitFormatData {
   let id = @bitcore.ObjectId::new(FixedArray::make(20, b'\xaa'))
   let tree = @bitcore.ObjectId::new(FixedArray::make(20, b'\xbb'))
@@ -195,6 +293,10 @@ fn log_test_format_data(
     reflog_selector_short: Some("HEAD@{0}"),
     reflog_selector: Some("HEAD@{0}"),
     reflog_message: Some("commit: " + subject),
+    reflog_author_name: Some("C O Mitter"),
+    reflog_author_email: Some("committer@example.com"),
+    pretty_color_enabled,
+    pretty_auto_color: "\u001b[33m",
   }
 }
 
@@ -205,6 +307,10 @@ test "log: format_commit_string honors reflog placeholders" {
   assert_eq(
     format_commit_string("%gD %gs %H", data),
     "HEAD@{0} commit: sixth aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  )
+  assert_eq(
+    format_commit_string("%gn:%ge", data),
+    "C O Mitter:committer@example.com",
   )
 }
 
@@ -239,6 +345,10 @@ test "log: format_commit_string honors left-right marker" {
     reflog_selector_short: None,
     reflog_selector: None,
     reflog_message: None,
+    reflog_author_name: None,
+    reflog_author_email: None,
+    pretty_color_enabled: false,
+    pretty_auto_color: "\u001b[33m",
   }
 
   assert_eq(format_commit_string("%m %s", data), "> sixth")
@@ -289,6 +399,70 @@ test "log: format_commit_string honors truncation and width padding" {
   assert_eq(
     format_commit_string("%<(20,trunc)%s", short_subject),
     "short               ",
+  )
+}
+
+///|
+test "log: format_commit_string honors pretty color directives" {
+  let data = log_test_format_data("subject", pretty_color_enabled=true)
+
+  assert_eq(
+    format_commit_string("%C(always,red)foo%C(always,reset)", data),
+    "\u001b[31mfoo\u001b[m",
+  )
+  assert_eq(
+    format_commit_string("%Credfoo%Creset", data),
+    "\u001b[31mfoo\u001b[m",
+  )
+  assert_eq(
+    format_commit_string("%C(auto)%H", data),
+    "\u001b[33maaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u001b[m",
+  )
+  assert_eq(
+    format_commit_string("%Credfoo%Creset", log_test_format_data("subject")),
+    "foo",
+  )
+}
+
+///|
+test "log: pretty color mode honors cli and config precedence" {
+  assert_false(
+    log_resolve_pretty_color_enabled_from_values(None, None, None, false),
+  )
+  assert_true(
+    log_resolve_pretty_color_enabled_from_values(
+      Some("always"),
+      None,
+      None,
+      false,
+    ),
+  )
+  assert_true(
+    log_resolve_pretty_color_enabled_from_values(
+      None,
+      Some("always"),
+      None,
+      false,
+    ),
+  )
+  assert_false(
+    log_resolve_pretty_color_enabled_from_values(
+      Some("always"),
+      None,
+      Some("never"),
+      false,
+    ),
+  )
+  assert_true(
+    log_resolve_pretty_color_enabled_from_values(None, None, Some("auto"), true),
+  )
+  assert_false(
+    log_resolve_pretty_color_enabled_from_values(
+      None,
+      None,
+      Some("auto"),
+      false,
+    ),
   )
 }
 
@@ -654,6 +828,10 @@ test "log: format_commit_string honors %w prefix" {
     reflog_selector_short: None,
     reflog_selector: None,
     reflog_message: None,
+    reflog_author_name: None,
+    reflog_author_email: None,
+    pretty_color_enabled: false,
+    pretty_auto_color: "\u001b[33m",
   }
   let wrapped = format_commit_string("%w(11,1,2)This is the %s commit.", data)
   assert_eq(wrapped, " This is\n  the sixth\n  commit.")
@@ -686,6 +864,10 @@ test "log: format_commit_string honors %w prefix" {
     reflog_selector_short: None,
     reflog_selector: None,
     reflog_message: None,
+    reflog_author_name: None,
+    reflog_author_email: None,
+    pretty_color_enabled: false,
+    pretty_auto_color: "\u001b[33m",
   }
   let sanitized = format_commit_string("%f", sanitized_data)
   assert_eq(sanitized, "Merge-tag-reach")

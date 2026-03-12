@@ -22,13 +22,9 @@ pub fn cherry_pick(
   commit_id : @bit.ObjectId,
   author : String,
   timestamp : Int64,
+  allow_empty? : Bool = false,
 ) -> CherryPickResult raise @bit.GitError {
   let git_dir = join_path(root, ".git")
-  // Get current HEAD
-  let head = resolve_head_commit(rfs, git_dir)
-  guard head is Some(head_id) else {
-    raise @bit.GitError::InvalidObject("HEAD not found")
-  }
   let db = ObjectDb::load(rfs, git_dir)
   // Read the commit to cherry-pick
   let commit_obj = db.get(rfs, commit_id)
@@ -39,10 +35,44 @@ pub fn cherry_pick(
     raise @bit.GitError::InvalidObject("Not a commit")
   }
   let commit_info = @bit.parse_commit(obj.data)
+  let message = cherry_pick_extract_message(obj.data, commit_id)
+  let head = resolve_head_commit(rfs, git_dir)
+  if head is None {
+    if commit_info.parents.length() == 0 {
+      let result_files = collect_tree_files(db, rfs, commit_info.tree)
+      return cherry_pick_write_result_commit(
+        db,
+        fs,
+        rfs,
+        root,
+        git_dir,
+        result_files,
+        [],
+        author,
+        timestamp,
+        message,
+      )
+    }
+    ignore(allow_empty)
+    raise @bit.GitError::InvalidObject("HEAD not found")
+  }
+  guard head is Some(head_id) else {
+    raise @bit.GitError::InvalidObject("HEAD not found")
+  }
   // Get the parent of the cherry-picked commit
   if commit_info.parents.length() == 0 {
-    raise @bit.GitError::InvalidObject(
-      "Cannot cherry-pick initial commit without parent",
+    let result_files = collect_tree_files(db, rfs, commit_info.tree)
+    return cherry_pick_write_result_commit(
+      db,
+      fs,
+      rfs,
+      root,
+      git_dir,
+      result_files,
+      [head_id],
+      author,
+      timestamp,
+      message,
     )
   }
   let parent_id = commit_info.parents[0]
@@ -138,14 +168,28 @@ pub fn cherry_pick(
     write_index_entries(fs, git_dir, result_entries)
     return { status: CherryPickStatus::Conflict, commit_id: None, conflicts }
   }
-  // Write result tree
-  let result_entries = tree_files_to_index(db, rfs, result_files)
-  write_index_entries(fs, git_dir, result_entries)
-  let result_tree = write_tree_from_index(fs, rfs, git_dir, result_entries)
-  // Extract original commit message
-  let commit_text = @utf8.decode_lossy(obj.data[:])
+  cherry_pick_write_result_commit(
+    db,
+    fs,
+    rfs,
+    root,
+    git_dir,
+    result_files,
+    [head_id],
+    author,
+    timestamp,
+    message,
+  )
+}
+
+///|
+fn cherry_pick_extract_message(
+  data : Bytes,
+  commit_id : @bit.ObjectId,
+) -> String {
+  let commit_text = @utf8.decode_lossy(data[:])
   let msg_start = commit_text.find("\n\n")
-  let message = match msg_start {
+  match msg_start {
     Some(idx) =>
       String::unsafe_substring(
         commit_text,
@@ -154,23 +198,31 @@ pub fn cherry_pick(
       )
     None => "Cherry-picked from \{commit_id.to_hex()}"
   }
-  // Create new commit
+}
+
+///|
+fn cherry_pick_write_result_commit(
+  db : ObjectDb,
+  fs : &@bit.FileSystem,
+  rfs : &@bit.RepoFileSystem,
+  root : String,
+  git_dir : String,
+  result_files : Map[String, TreeFileEntry],
+  parents : Array[@bit.ObjectId],
+  author : String,
+  timestamp : Int64,
+  message : String,
+) -> CherryPickResult raise @bit.GitError {
+  let result_entries = tree_files_to_index(db, rfs, result_files)
+  write_index_entries(fs, git_dir, result_entries)
+  let result_tree = write_tree_from_index(fs, rfs, git_dir, result_entries)
   let new_commit = @bit.Commit::new(
-    result_tree,
-    [head_id],
-    author,
-    timestamp,
-    "+0000",
-    author,
-    timestamp,
-    "+0000",
+    result_tree, parents, author, timestamp, "+0000", author, timestamp, "+0000",
     message,
   )
   let (new_id, new_data) = @bit.create_commit(new_commit)
   write_object_bytes(fs, git_dir, new_id, new_data)
-  // Update HEAD
   update_head_ref(fs, rfs, git_dir, new_id)
-  // Update worktree
   write_worktree_from_files(db, fs, rfs, root, git_dir, result_files)
   { status: CherryPickStatus::Success, commit_id: Some(new_id), conflicts: [] }
 }

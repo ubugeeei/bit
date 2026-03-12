@@ -313,6 +313,18 @@ fn storage_get_commit_timestamp() -> Int64 {
 }
 
 ///|
+fn storage_get_author_timestamp() -> Int64 {
+  match @sys.get_env_var("GIT_AUTHOR_DATE") {
+    Some(raw) =>
+      match storage_parse_git_env_timestamp(raw) {
+        Some(ts) => ts
+        None => storage_get_commit_timestamp()
+      }
+    None => storage_get_commit_timestamp()
+  }
+}
+
+///|
 fn storage_is_valid_timezone_token(token : String) -> Bool {
   if token.length() != 5 {
     return false
@@ -359,6 +371,18 @@ fn storage_get_commit_timezone() -> String {
         None => "+0000"
       }
     None => "+0000"
+  }
+}
+
+///|
+fn storage_get_author_timezone() -> String {
+  match @sys.get_env_var("GIT_AUTHOR_DATE") {
+    Some(raw) =>
+      match storage_parse_git_env_timezone(raw) {
+        Some(tz) => tz
+        None => storage_get_commit_timezone()
+      }
+    None => storage_get_commit_timezone()
   }
 }
 
@@ -624,6 +648,8 @@ fn storage_handle_commit(
       @bitlib.add_paths(fs, rfs, root, all_modified_paths)
     }
   }
+  let author_timestamp = storage_get_author_timestamp()
+  let author_timezone = storage_get_author_timezone()
   let timestamp = storage_get_commit_timestamp()
   let timezone = storage_get_commit_timezone()
   let committer = storage_get_committer_string()
@@ -634,12 +660,14 @@ fn storage_handle_commit(
     root,
     args.message,
     storage_get_author_string(),
-    timestamp,
+    author_timestamp,
     committer~,
     committer_timestamp~,
     allow_empty=args.allow_empty,
     timezone~,
     encoding=args.encoding,
+    author_timezone=Some(author_timezone),
+    committer_timezone=Some(timezone),
   )
   if not(args.quiet) {
     let short_id = (try! commit_id.to_hex()[:7]).to_string()

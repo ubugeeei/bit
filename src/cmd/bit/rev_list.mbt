@@ -1,6 +1,37 @@
 ///| Pack handlers: rev-list, verify-pack, unpack-objects, bundle
 
 ///|
+async fn delegate_rev_list_to_real_git(
+  args : Array[String],
+  cwd : String,
+) -> Unit {
+  let argv : Array[String] = ["rev-list"]
+  for arg in args {
+    argv.push(arg)
+  }
+  let code = @process.run(
+    resolve_real_git_for_dispatch(),
+    argv,
+    inherit_env=true,
+    cwd~,
+    stdin=@stdio.stdin,
+    stdout=@stdio.stdout,
+    stderr=@stdio.stderr,
+  )
+  @sys.exit(code)
+}
+
+///|
+fn rev_list_requires_real_git(args : Array[String]) -> Bool {
+  for arg in args {
+    if arg == "--cherry-pick" || arg == "--cherry-mark" || arg == "--cherry" {
+      return true
+    }
+  }
+  false
+}
+
+///|
 fn rev_list_config_get(
   fs : &@bitcore.RepoFileSystem,
   git_dir : String,
@@ -53,6 +84,11 @@ async fn rev_list_write_text(
 
 ///|
 async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
+  let cwd = @env.current_dir().unwrap_or(".")
+  if rev_list_requires_real_git(args) {
+    delegate_rev_list_to_real_git(args, cwd)
+    return
+  }
   let fs = OsFs::new()
   let git_dir = find_git_dir(fs)
   let mut max_count : Int? = None
@@ -70,6 +106,7 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
   let mut use_bitmap = false
   let mut no_object_names = false
   let mut format : String? = None
+  let mut pretty_color_cli_mode : String? = None
   let refs : Array[String] = []
   let excludes : Array[String] = []
   let mut i = 0
@@ -95,6 +132,9 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
       "--no-use-bitmap-index" => ()
       "--no-object-names" => no_object_names = true
       "--object-names" => no_object_names = false
+      "--color" | "--color=always" => pretty_color_cli_mode = Some("always")
+      "--color=auto" => pretty_color_cli_mode = Some("auto")
+      "--no-color" | "--color=never" => pretty_color_cli_mode = Some("never")
       _ if arg.has_prefix("--format=") =>
         format = Some(String::unsafe_substring(arg, start=9, end=arg.length()))
       "--skip" if i + 1 < args.length() => {
@@ -324,6 +364,15 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
       } else {
         (raw_fmt, true)
       }
+      let pretty_color_enabled = if fmt.contains("%C") {
+        log_resolve_pretty_color_enabled(
+          git_dir,
+          pretty_color_cli_mode,
+          log_stdout_is_tty(),
+        )
+      } else {
+        false
+      }
       let ref_names : Map[String, Array[String]] = {}
       let output_encoding = rev_list_resolve_output_encoding(fs, git_dir)
       for idx, id in sliced_result {
@@ -339,6 +388,7 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
               info.tree,
               info.parents,
               ref_names,
+              pretty_color_enabled~,
             )
             let formatted = format_commit_string(fmt, fdata)
             rev_list_write_text(formatted, output_encoding)

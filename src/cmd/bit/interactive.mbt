@@ -181,6 +181,7 @@ async fn read_commit_message_from_editor(
   fs : OsFs,
   root : String,
   initial_message? : String? = None,
+  allow_empty_message? : Bool = false,
   editor? : (async (String) -> Bool raise Error)? = None,
 ) -> String? raise Error {
   let git_dir = resolve_git_dir(fs, root)
@@ -195,7 +196,10 @@ async fn read_commit_message_from_editor(
   }
   guard fs.is_file(path) else { return None }
   let content = decode_bytes(fs.read_file(path))
-  normalize_commit_edit_buffer(content)
+  match normalize_commit_edit_buffer(content) {
+    Some(msg) => Some(msg)
+    None => if allow_empty_message { Some("") } else { None }
+  }
 }
 
 ///|

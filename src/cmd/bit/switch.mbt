@@ -108,8 +108,9 @@ async fn handle_switch(args : Array[String]) -> Unit raise Error {
       }
     }
     ignore(discard_changes)
+    let previous_location = current_checkout_location(rfs, git_dir)
     switch_write_head_ref(fs, git_dir, branch_name)
-    @bitlib.write_index_entries(fs, git_dir, [])
+    save_previous_checkout_location(fs, git_dir, previous_location)
     println("Switched to a new branch '\{branch_name}'")
     return
   }
@@ -172,9 +173,7 @@ async fn handle_switch(args : Array[String]) -> Unit raise Error {
         @bitlib.switch_branch(fs, rfs, root, branch_name)
       }
       None => {
-        let ref_path = git_dir + "/" + refname
-        ensure_dir(parent_dir(ref_path))
-        fs.write_string(ref_path, "")
+        @bitlib.create_branch(fs, rfs, root, branch_name, start_point~)
         switch_apply_tracking_config(
           fs, rfs, git_dir, branch_name, start_point, track_mode,
         )

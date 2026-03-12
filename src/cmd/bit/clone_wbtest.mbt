@@ -268,6 +268,33 @@ test "clone: recurse submodule filters are written as config multivar" {
 }
 
 ///|
+test "clone: sparse flag initializes cone sparse-checkout metadata" {
+  let fs = OsFs::new()
+  let root = "/tmp/bit-clone-sparse-" + get_current_timestamp().to_string()
+  let git_dir = root + "/.git"
+  cleanup_clone_wbtest_tree(fs, root)
+  fs.mkdir_p(git_dir)
+  fs.write_string(
+    git_dir + "/config",
+    "[core]\n\trepositoryformatversion = 0\n",
+  )
+  clone_maybe_enable_sparse_checkout(fs, root, true, false) catch {
+    err => fail("unexpected error: \{err}")
+  }
+  assert_eq(
+    decode_bytes(fs.read_file(git_dir + "/info/sparse-checkout")),
+    "/*\n!/*/\n",
+  )
+  let config = decode_bytes(fs.read_file(git_dir + "/config"))
+  let worktree_config = decode_bytes(fs.read_file(git_dir + "/config.worktree"))
+  assert_true(config.contains("[extensions]"))
+  assert_true(config.contains("worktreeConfig = true"))
+  assert_true(worktree_config.contains("sparseCheckout = true"))
+  assert_true(worktree_config.contains("sparseCheckoutCone = true"))
+  cleanup_clone_wbtest_tree(fs, root)
+}
+
+///|
 async test "clone: run_postclone_hook is no-op when hook is absent" {
   let fs = OsFs::new()
   let root = "/tmp/bit-test-postclone-noop-" +

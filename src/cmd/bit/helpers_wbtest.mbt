@@ -183,11 +183,45 @@ test "helpers: get_commit_timestamp parses git-style committer date" {
 }
 
 ///|
+test "helpers: get_author_timestamp prefers author date" {
+  let prev_author = @sys.get_env_var("GIT_AUTHOR_DATE")
+  let prev_committer = @sys.get_env_var("GIT_COMMITTER_DATE")
+  @sys.set_env_var("GIT_AUTHOR_DATE", "1234567891 -0600")
+  @sys.set_env_var("GIT_COMMITTER_DATE", "1234567890 -0700")
+  assert_eq(get_author_timestamp(), 1234567891L)
+  match prev_author {
+    Some(value) => @sys.set_env_var("GIT_AUTHOR_DATE", value)
+    None => @sys.unset_env_var("GIT_AUTHOR_DATE")
+  }
+  match prev_committer {
+    Some(value) => @sys.set_env_var("GIT_COMMITTER_DATE", value)
+    None => @sys.unset_env_var("GIT_COMMITTER_DATE")
+  }
+}
+
+///|
 test "helpers: get_commit_timezone parses git-style committer date" {
   let prev = @sys.get_env_var("GIT_COMMITTER_DATE")
   @sys.set_env_var("GIT_COMMITTER_DATE", "1234567890 -0700")
   assert_eq(get_commit_timezone(), "-0700")
   match prev {
+    Some(value) => @sys.set_env_var("GIT_COMMITTER_DATE", value)
+    None => @sys.unset_env_var("GIT_COMMITTER_DATE")
+  }
+}
+
+///|
+test "helpers: get_author_timezone prefers author date" {
+  let prev_author = @sys.get_env_var("GIT_AUTHOR_DATE")
+  let prev_committer = @sys.get_env_var("GIT_COMMITTER_DATE")
+  @sys.set_env_var("GIT_AUTHOR_DATE", "1234567891 -0600")
+  @sys.set_env_var("GIT_COMMITTER_DATE", "1234567890 -0700")
+  assert_eq(get_author_timezone(), "-0600")
+  match prev_author {
+    Some(value) => @sys.set_env_var("GIT_AUTHOR_DATE", value)
+    None => @sys.unset_env_var("GIT_AUTHOR_DATE")
+  }
+  match prev_committer {
     Some(value) => @sys.set_env_var("GIT_COMMITTER_DATE", value)
     None => @sys.unset_env_var("GIT_COMMITTER_DATE")
   }

@@ -127,3 +127,10 @@ test "show: pretty format honors body modifiers" {
   ).unwrap()
   assert_eq(rendered, "subject\nbody line\nThanks\n")
 }
+
+///|
+test "show: reference pretty format delegates to real git" {
+  assert_true(show_requires_real_git(["-s", "--pretty=reference", "HEAD"]))
+  assert_true(show_requires_real_git(["--format=reference", "HEAD"]))
+  assert_false(show_requires_real_git(["-s", "--pretty=%s", "HEAD"]))
+}

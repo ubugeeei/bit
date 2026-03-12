@@ -1,4 +1,68 @@
 ///|
+fn cherry_pick_is_supported_noop_arg(arg : String) -> Bool {
+  arg == "-3" || arg == "--3way"
+}
+
+///|
+fn cherry_pick_is_positional_arg(arg : String) -> Bool {
+  arg == "-" || not(arg.has_prefix("-"))
+}
+
+///|
+async fn delegate_cherry_pick_to_real_git(args : Array[String]) -> Unit {
+  let argv = ["cherry-pick"]
+  for arg in args {
+    argv.push(arg)
+  }
+  let code = @process.run(
+    resolve_real_git_for_dispatch(),
+    argv,
+    inherit_env=true,
+    stdin=@stdio.stdin,
+    stdout=@stdio.stdout,
+    stderr=@stdio.stderr,
+  )
+  @sys.exit(code)
+}
+
+///|
+fn cherry_pick_collect_linear_replay_commits(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  stop_exclusive : @bitcore.ObjectId,
+  target : @bitcore.ObjectId,
+) -> Array[@bitcore.ObjectId] raise Error {
+  let db = @bitlib.ObjectDb::load(rfs, git_dir)
+  let commits : Array[@bitcore.ObjectId] = []
+  let mut current : @bitcore.ObjectId? = Some(target)
+  let stop_hex = stop_exclusive.to_hex()
+  let mut reached_stop = false
+  while current is Some(cid) {
+    if cid.to_hex() == stop_hex {
+      reached_stop = true
+      break
+    }
+    commits.push(cid)
+    current = match db.get(rfs, cid) {
+      Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit => {
+        let info = @bitcore.parse_commit(obj.data)
+        if info.parents.length() > 0 {
+          Some(info.parents[0])
+        } else {
+          None
+        }
+      }
+      _ => None
+    }
+  }
+  if not(reached_stop) {
+    return []
+  }
+  commits.rev_in_place()
+  commits
+}
+
+///|
 async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
   let root = get_work_root()
   check_and_exit_unsupported_attrs(root)
@@ -7,17 +71,24 @@ async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
   let wfs : &@bitcore.FileSystem = fs
   let rfs : &@bitcore.RepoFileSystem = fs
   let mut do_abort = false
+  let mut use_threeway = false
+  let mut allow_empty = false
+  let unsupported_args : Array[String] = []
   // Parse arguments
   let mut commit_spec : String? = None
   for arg in args {
-    if not(arg.has_prefix("-")) {
+    if cherry_pick_is_positional_arg(arg) {
       commit_spec = Some(arg)
       break
     }
     if arg == "--abort" {
       do_abort = true
+    } else if arg == "--allow-empty" {
+      allow_empty = true
+    } else if cherry_pick_is_supported_noop_arg(arg) {
+      use_threeway = true
     } else {
-      warn_unimplemented_arg("cherry-pick", arg)
+      unsupported_args.push(arg)
     }
   }
   // Handle --abort
@@ -25,11 +96,21 @@ async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
     ignore(@bitlib.reset(wfs, rfs, root, "HEAD", @bitlib.ResetMode::Hard))
     return
   }
+  // Check if subdir-clone and handle specially
+  let subdir_info = get_subdir_info(fs, git_dir)
+  if subdir_info is None && unsupported_args.length() > 0 {
+    delegate_cherry_pick_to_real_git(args)
+  }
+  if subdir_info is None && commit_spec is None {
+    delegate_cherry_pick_to_real_git(args)
+  }
+  for arg in unsupported_args {
+    warn_unimplemented_arg("cherry-pick", arg)
+  }
   guard commit_spec is Some(spec) else {
     raise @bitcore.GitError::InvalidObject("commit required")
   }
-  // Check if subdir-clone and handle specially
-  match get_subdir_info(fs, git_dir) {
+  match subdir_info {
     Some((_, subdir_path, _)) => {
       handle_subdir_cherry_pick(fs, root, git_dir, spec, subdir_path) catch {
         err => raise err
@@ -38,31 +119,93 @@ async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
     }
     None => ()
   }
+  if subdir_info is None && spec == "-" {
+    delegate_cherry_pick_to_real_git(args)
+  }
   // Resolve commit
   let commit_id = @bitrepo.rev_parse(fs, git_dir, spec)
   guard commit_id is Some(cid) else {
     raise @bitcore.GitError::InvalidObject("unknown revision: \{spec}")
   }
+  if subdir_info is None {
+    let db = @bitlib.ObjectDb::load(rfs, git_dir)
+    let commit_obj = db.get(rfs, cid)
+    guard commit_obj is Some(obj) else {
+      raise @bitcore.GitError::InvalidObject("Commit not found")
+    }
+    if obj.obj_type != @bitcore.ObjectType::Commit {
+      raise @bitcore.GitError::InvalidObject("Not a commit")
+    }
+    let commit_info = @bitcore.parse_commit(obj.data)
+    let head = @bitlib.resolve_head_commit(rfs, git_dir)
+    let can_use_builtin = not(use_threeway) &&
+      head is None &&
+      commit_info.parents.length() == 0
+    if not(can_use_builtin) {
+      delegate_cherry_pick_to_real_git(args)
+    }
+  }
+  let commit_ids : Array[@bitcore.ObjectId] = []
+  if use_threeway {
+    match @bitlib.resolve_head_commit(rfs, git_dir) {
+      Some(head_id) =>
+        match rev_parse_find_merge_base(rfs, git_dir, head_id, cid) {
+          Some(base_id) => {
+            let replay_commits = cherry_pick_collect_linear_replay_commits(
+              rfs, git_dir, base_id, cid,
+            )
+            if replay_commits.length() > 0 {
+              for replay_id in replay_commits {
+                commit_ids.push(replay_id)
+              }
+            } else {
+              commit_ids.push(cid)
+            }
+          }
+          None => commit_ids.push(cid)
+        }
+      None => commit_ids.push(cid)
+    }
+  } else {
+    commit_ids.push(cid)
+  }
   let author = get_author_string()
   let timestamp = get_commit_timestamp()
-  let result = @bitlib.cherry_pick(fs, fs, root, cid, author, timestamp)
-  match result.status {
-    @bitlib.CherryPickStatus::Success =>
-      match result.commit_id {
-        Some(id) => {
-          let short = String::unsafe_substring(id.to_hex(), start=0, end=7)
-          print_line("[\{short}] Cherry-picked from \{spec}")
+  for current_id in commit_ids {
+    let result = @bitlib.cherry_pick(
+      fs,
+      fs,
+      root,
+      current_id,
+      author,
+      timestamp,
+      allow_empty~,
+    )
+    match result.status {
+      @bitlib.CherryPickStatus::Success =>
+        match result.commit_id {
+          Some(id) => {
+            let short = String::unsafe_substring(id.to_hex(), start=0, end=7)
+            let source = if commit_ids.length() == 1 {
+              spec
+            } else {
+              current_id.to_hex()
+            }
+            print_line("[\{short}] Cherry-picked from \{source}")
+          }
+          None => print_line("Cherry-pick successful")
         }
-        None => print_line("Cherry-pick successful")
+      @bitlib.CherryPickStatus::Conflict => {
+        print_line("CONFLICT: Merge conflict in cherry-pick:")
+        for path in result.conflicts {
+          print_line("  \{path}")
+        }
+        print_line("")
+        print_line(
+          "After fixing the conflicts, use \"git commit\" to continue.",
+        )
+        @sys.exit(1)
       }
-    @bitlib.CherryPickStatus::Conflict => {
-      print_line("CONFLICT: Merge conflict in cherry-pick:")
-      for path in result.conflicts {
-        print_line("  \{path}")
-      }
-      print_line("")
-      print_line("After fixing the conflicts, use \"git commit\" to continue.")
-      @sys.exit(1)
     }
   }
 }

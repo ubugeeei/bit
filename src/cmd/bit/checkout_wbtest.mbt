@@ -721,6 +721,52 @@ async fn checkout_wbtest_case_treeish_restore_updates_index() -> Unit raise Erro
 }
 
 ///|
+async fn checkout_wbtest_case_treeish_restore_without_separator() -> Unit raise Error {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-checkout-treeish-no-sep-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
+  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
+  let prev_git_dir = @sys.get_env_var("GIT_DIR")
+  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
+
+  add_test_run_git(root, ["init", "--initial-branch=main", "-q", "repo"])
+  add_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  add_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+  fs.write_string(repo_dir + "/file", "main\n")
+  add_test_run_git(repo_dir, ["add", "file"])
+  add_test_run_git(repo_dir, ["commit", "-q", "-m", "main"])
+  add_test_run_git(repo_dir, ["checkout", "-q", "-b", "side"])
+  fs.write_string(repo_dir + "/file", "side\n")
+  add_test_run_git(repo_dir, ["commit", "-qam", "side"])
+  add_test_run_git(repo_dir, ["checkout", "-q", "main"])
+  fs.write_string(repo_dir + "/file", "dirty\n")
+
+  @sys.set_env_var("GIT_SHIM_CWD", repo_dir)
+  @sys.set_env_var("GIT_SHIM_PWD", repo_dir)
+  @sys.unset_env_var("GIT_DIR")
+  @sys.unset_env_var("GIT_WORK_TREE")
+  handle_checkout(["side", "file"])
+
+  assert_eq(decode_bytes(fs.read_file(repo_dir + "/file")), "side\n")
+  assert_eq(
+    add_test_git_stdout(repo_dir, ["symbolic-ref", "--short", "HEAD"]),
+    "main\n",
+  )
+
+  add_test_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
+  add_test_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
+  add_test_restore_env("GIT_DIR", prev_git_dir)
+  add_test_restore_env("GIT_WORK_TREE", prev_work_tree)
+  cleanup_tree(fs, root)
+}
+
+///|
 async fn checkout_wbtest_case_track_sets_branch_config() -> Unit raise Error {
   @bitnative.init_native_io()
   let fs = OsFs::new()
@@ -767,9 +813,96 @@ async fn checkout_wbtest_case_track_sets_branch_config() -> Unit raise Error {
 }
 
 ///|
+async fn checkout_wbtest_case_detach_head_without_target() -> Unit raise Error {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-checkout-detach-head-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
+  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
+  let prev_git_dir = @sys.get_env_var("GIT_DIR")
+  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
+
+  add_test_run_git(root, ["init", "--initial-branch=main", "-q", "repo"])
+  add_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  add_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+  fs.write_string(repo_dir + "/file", "base\n")
+  add_test_run_git(repo_dir, ["add", "file"])
+  add_test_run_git(repo_dir, ["commit", "-q", "-m", "base"])
+  let head_before = trim_string(
+    add_test_git_stdout(repo_dir, ["rev-parse", "HEAD"]),
+  )
+
+  @sys.set_env_var("GIT_SHIM_CWD", repo_dir)
+  @sys.set_env_var("GIT_SHIM_PWD", repo_dir)
+  @sys.unset_env_var("GIT_DIR")
+  @sys.unset_env_var("GIT_WORK_TREE")
+  handle_checkout(["--detach"])
+
+  assert_eq(
+    trim_string(decode_bytes(fs.read_file(repo_dir + "/.git/HEAD"))),
+    head_before,
+  )
+
+  add_test_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
+  add_test_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
+  add_test_restore_env("GIT_DIR", prev_git_dir)
+  add_test_restore_env("GIT_WORK_TREE", prev_work_tree)
+  cleanup_tree(fs, root)
+}
+
+///|
+async fn checkout_wbtest_case_previous_checkout_syntax() -> Unit raise Error {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-checkout-prev-syntax-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
+  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
+  let prev_git_dir = @sys.get_env_var("GIT_DIR")
+  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
+
+  add_test_run_git(root, ["init", "--initial-branch=main", "-q", "repo"])
+  add_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  add_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+  fs.write_string(repo_dir + "/file", "base\n")
+  add_test_run_git(repo_dir, ["add", "file"])
+  add_test_run_git(repo_dir, ["commit", "-q", "-m", "base"])
+
+  @sys.set_env_var("GIT_SHIM_CWD", repo_dir)
+  @sys.set_env_var("GIT_SHIM_PWD", repo_dir)
+  @sys.unset_env_var("GIT_DIR")
+  @sys.unset_env_var("GIT_WORK_TREE")
+
+  handle_checkout(["-b", "topic"])
+  handle_checkout(["main"])
+  handle_checkout(["@{-1}"])
+
+  assert_eq(
+    add_test_git_stdout(repo_dir, ["symbolic-ref", "--short", "HEAD"]),
+    "topic\n",
+  )
+
+  add_test_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
+  add_test_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
+  add_test_restore_env("GIT_DIR", prev_git_dir)
+  add_test_restore_env("GIT_WORK_TREE", prev_work_tree)
+  cleanup_tree(fs, root)
+}
+
+///|
 async test "checkout: command path cases stay compatible" {
   checkout_wbtest_case_treeish_restore()
   checkout_wbtest_case_treeish_restore_updates_index()
+  checkout_wbtest_case_treeish_restore_without_separator()
   checkout_wbtest_case_switch_back_to_main()
   checkout_wbtest_case_switch_back_with_detached_worktree()
   checkout_wbtest_case_switch_back_after_shim_commit()
@@ -782,4 +915,6 @@ async test "checkout: command path cases stay compatible" {
   checkout_wbtest_case_checkout_updates_head_reflog()
   checkout_wbtest_case_force_checkout_clears_merge_state()
   checkout_wbtest_case_track_sets_branch_config()
+  checkout_wbtest_case_detach_head_without_target()
+  checkout_wbtest_case_previous_checkout_syntax()
 }

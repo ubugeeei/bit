@@ -12,6 +12,7 @@ async fn handle_checkout(args : Array[String]) -> Unit raise Error {
   let mut force_checkout = false
   let mut orphan_branch = false
   let mut track_branch = false
+  let mut detach_head = false
   let pre_separator_targets : Array[String] = []
   let post_separator_targets : Array[String] = []
   let mut i = 0
@@ -26,6 +27,7 @@ async fn handle_checkout(args : Array[String]) -> Unit raise Error {
       }
       "--track" => track_branch = true
       "-f" | "--force" => force_checkout = true
+      "--detach" => detach_head = true
       "--orphan" => orphan_branch = true
       "-" =>
         if saw_separator {
@@ -43,7 +45,13 @@ async fn handle_checkout(args : Array[String]) -> Unit raise Error {
     }
     i += 1
   }
-  let targets = pre_separator_targets
+  let targets = if detach_head &&
+    not(saw_separator) &&
+    pre_separator_targets.length() == 0 {
+    ["HEAD"]
+  } else {
+    pre_separator_targets
+  }
   if not(saw_separator) && targets.length() == 0 {
     raise @bitcore.GitError::InvalidObject("No target specified for checkout")
   }
@@ -151,6 +159,31 @@ async fn handle_checkout(args : Array[String]) -> Unit raise Error {
   // Single target: determine if it's a branch or file
   if targets.length() == 1 {
     let target = resolve_checkout_target(rfs, git_dir, targets[0])
+    if detach_head {
+      let previous_location = current_checkout_location(rfs, git_dir)
+      let previous_head_id = @bitrepo.rev_parse(rfs, git_dir, "HEAD")
+      let new_head_id = checkout_with_promisor_retry(
+        fs,
+        root,
+        target,
+        detach=true,
+      )
+      match previous_head_id {
+        Some(old_id) =>
+          checkout_append_head_reflog(
+            fs,
+            rfs,
+            git_dir,
+            previous_location.unwrap_or(old_id.to_hex()),
+            targets[0],
+            old_id,
+            new_head_id,
+          )
+        None => ()
+      }
+      save_previous_checkout_location(fs, git_dir, previous_location)
+      return ()
+    }
     let is_path = fs.is_file(root + "/" + target) ||
       fs.is_dir(root + "/" + target) ||
       checkout_target_is_tracked_path(rfs, git_dir, target)
@@ -210,8 +243,19 @@ async fn handle_checkout(args : Array[String]) -> Unit raise Error {
       save_previous_checkout_location(fs, git_dir, previous_location)
     }
   } else {
-    // Multiple targets: treat as file paths
-    @bitlib.restore_paths(fs, fs, root, targets)
+    let first = resolve_checkout_target(rfs, git_dir, targets[0])
+    if @bitrepo.rev_parse(rfs, git_dir, first) is Some(_) {
+      let restore_paths : Array[String] = []
+      for i in 1..<targets.length() {
+        restore_paths.push(targets[i])
+      }
+      checkout_restore_paths_from_spec(
+        fs, rfs, root, git_dir, first, restore_paths,
+      )
+    } else {
+      // Multiple targets: treat as file paths
+      @bitlib.restore_paths(fs, fs, root, targets)
+    }
   }
 }
 
@@ -665,7 +709,7 @@ fn resolve_checkout_target(
   git_dir : String,
   target : String,
 ) -> String raise Error {
-  if target != "-" {
+  if target != "-" && target != "@{-1}" {
     return target
   }
   match load_previous_checkout_location(fs, git_dir) {

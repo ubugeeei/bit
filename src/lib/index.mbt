@@ -197,7 +197,11 @@ pub fn expand_sparse_index_entries(
   let expanded : Array[IndexEntry] = []
   for entry in entries {
     if index_entry_is_sparse_dir(entry) {
-      let prefix = entry.path[:entry.path.length() - 1].to_string()
+      let prefix = String::unsafe_substring(
+        entry.path,
+        start=0,
+        end=entry.path.length() - 1,
+      )
       index_collect_tree_entries(db, fs, entry.id, prefix, expanded)
     } else {
       expanded.push(entry)
@@ -229,7 +233,11 @@ pub fn expand_sparse_skip_worktree_paths(
       continue
     }
     if index_entry_is_sparse_dir(entry) {
-      let prefix = entry.path[:entry.path.length() - 1].to_string()
+      let prefix = String::unsafe_substring(
+        entry.path,
+        start=0,
+        end=entry.path.length() - 1,
+      )
       let children : Array[IndexEntry] = []
       index_collect_tree_entries(db, fs, entry.id, prefix, children)
       for child in children {
@@ -676,8 +684,12 @@ fn index_cache_tree_invalidate_path(
       }
     }
     Some(idx) => {
-      let head = path[:idx].to_string()
-      let tail = path[idx + 1:].to_string()
+      let head = String::unsafe_substring(path, start=0, end=idx)
+      let tail = String::unsafe_substring(
+        path,
+        start=idx + 1,
+        end=path.length(),
+      )
       let updated : Array[IndexCacheTree] = []
       for subtree in tree.subtrees {
         if subtree.name == head {

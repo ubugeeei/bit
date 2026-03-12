@@ -142,6 +142,7 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
   let mut no_edit = false
   let mut quiet = false
   let mut signoff = false
+  let mut cleanup_mode = "default"
   let mut author_override : String? = None
   let mut date_override : String? = None
   let mut edit_flag : Bool? = None
@@ -321,6 +322,17 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
       "-q" | "--quiet" => quiet = true
       "-s" | "--signoff" => signoff = true
       "--no-signoff" => signoff = false
+      "--cleanup" if i + 1 < args.length() => {
+        match commit_normalize_cleanup_mode(args[i + 1]) {
+          Some(mode) => cleanup_mode = mode
+          None => {
+            eprint_line("fatal: invalid cleanup mode `\{args[i + 1]}`")
+            @sys.exit(128)
+          }
+        }
+        i += 2
+        continue
+      }
       "-i" | "--include" => include_mode = true
       "-o" | "--only" => only_mode = true
       "--dry-run"
@@ -331,6 +343,18 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
       | "--no-status" => ()
       "-t" | "--template" if i + 1 < args.length() => {
         i += 2
+        continue
+      }
+      _ if arg.has_prefix("--cleanup=") => {
+        let value = (try! arg[10:]).to_string()
+        match commit_normalize_cleanup_mode(value) {
+          Some(mode) => cleanup_mode = mode
+          None => {
+            eprint_line("fatal: invalid cleanup mode `\{value}`")
+            @sys.exit(128)
+          }
+        }
+        i += 1
         continue
       }
       _ if arg.has_prefix("--template=") || arg.has_prefix("-t") => ()
@@ -399,11 +423,21 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
       } else {
         None
       }
-      message = read_commit_message_from_editor(fs, root, initial_message~)
+      message = read_commit_message_from_editor(
+        fs,
+        root,
+        initial_message~,
+        allow_empty_message~,
+      )
     }
   } else if should_edit && not(no_edit) {
     // -c or --edit: open editor with existing message
-    message = read_commit_message_from_editor(fs, root, initial_message=message)
+    message = read_commit_message_from_editor(
+      fs,
+      root,
+      initial_message=message,
+      allow_empty_message~,
+    )
   }
   guard message is Some(msg) else {
     raise @bitcore.GitError::InvalidObject(
@@ -411,7 +445,7 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
     )
   }
   // Validate empty message
-  let stripped_msg = commit_strip_message(msg)
+  let stripped_msg = commit_prepare_message_for_validation(msg, cleanup_mode)
   if stripped_msg.length() == 0 && not(allow_empty_message) {
     eprint_line("Aborting commit due to empty commit message.")
     @sys.exit(1)
@@ -419,6 +453,8 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
   // Apply --signoff
   let msg = if signoff { commit_apply_signoff(msg) } else { msg }
   let default_author = get_author_string()
+  let default_author_timestamp = get_author_timestamp()
+  let author_timezone = get_author_timezone()
   let default_timestamp = get_commit_timestamp()
   let commit_timezone = get_commit_timezone()
   let author = match author_override {
@@ -427,7 +463,11 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
   }
   let author_timestamp = match date_override {
     Some(d) => parse_commit_date(d)
-    None => default_timestamp
+    None => default_author_timestamp
+  }
+  let resolved_author_timezone = match date_override {
+    Some(d) => parse_git_env_timezone(d).unwrap_or(author_timezone)
+    None => author_timezone
   }
   // Committer is always the current user
   let committer = get_committer_string()
@@ -450,6 +490,8 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
       committer_timestamp~,
       timezone=commit_timezone,
       encoding=commit_message_encoding,
+      author_timezone=Some(resolved_author_timezone),
+      committer_timezone=Some(commit_timezone),
     )
   } else if merge_heads.length() > 0 {
     commit_with_merge_heads(
@@ -464,6 +506,8 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
       merge_heads,
       allow_empty,
       encoding=commit_message_encoding,
+      author_timezone=resolved_author_timezone,
+      committer_timezone=commit_timezone,
     )
   } else {
     @bitlib.commit(
@@ -478,6 +522,8 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
       allow_empty~,
       timezone=commit_timezone,
       encoding=commit_message_encoding,
+      author_timezone=Some(resolved_author_timezone),
+      committer_timezone=Some(commit_timezone),
     )
   }
   if should_cleanup_merge_state {
@@ -610,6 +656,8 @@ fn commit_with_merge_heads(
   merge_heads : Array[@bitcore.ObjectId],
   allow_empty : Bool,
   encoding? : String = "UTF-8",
+  author_timezone? : String = "+0000",
+  committer_timezone? : String = "+0000",
 ) -> @bitcore.ObjectId raise Error {
   let git_dir = resolve_git_dir(rfs, root)
   let head_parent = @bitlib.resolve_head_commit(rfs, git_dir)
@@ -672,10 +720,10 @@ fn commit_with_merge_heads(
     parents,
     author,
     author_timestamp,
-    "+0000",
+    author_timezone,
     committer,
     committer_timestamp,
-    "+0000",
+    committer_timezone,
     message,
     encoding~,
   )
@@ -812,6 +860,26 @@ fn commit_strip_message(msg : String) -> String {
     let _ = lines.remove(0)
   }
   lines.join("\n")
+}
+
+///|
+fn commit_normalize_cleanup_mode(value : String) -> String? {
+  match value {
+    "strip" | "whitespace" | "verbatim" | "scissors" | "default" => Some(value)
+    _ => None
+  }
+}
+
+///|
+fn commit_prepare_message_for_validation(
+  msg : String,
+  cleanup_mode : String,
+) -> String {
+  if cleanup_mode == "verbatim" {
+    msg
+  } else {
+    commit_strip_message(msg)
+  }
 }
 
 ///|

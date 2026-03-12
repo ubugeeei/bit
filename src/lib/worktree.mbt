@@ -384,6 +384,8 @@ pub fn commit(
   allow_empty? : Bool = false,
   timezone? : String = "+0000",
   encoding? : String = "UTF-8",
+  author_timezone? : String? = None,
+  committer_timezone? : String? = None,
 ) -> @bit.ObjectId raise @bit.GitError {
   let git_dir = join_path(root, ".git")
   let actual_git_dir = if rfs.is_file(git_dir) {
@@ -433,15 +435,17 @@ pub fn commit(
     Some(p) => [p]
     None => []
   }
+  let resolved_author_timezone = author_timezone.unwrap_or(timezone)
+  let resolved_committer_timezone = committer_timezone.unwrap_or(timezone)
   let commit = @bit.Commit::new(
     tree_id,
     parents,
     author,
     author_timestamp,
-    timezone,
+    resolved_author_timezone,
     committer,
     committer_timestamp,
-    timezone,
+    resolved_committer_timezone,
     message,
     encoding~,
   )
@@ -461,7 +465,7 @@ pub fn commit(
     },
     committer~,
     timestamp=committer_timestamp,
-    timezone~,
+    timezone=resolved_committer_timezone,
   )
   if entries.length() > 0 {
     write_index_entries_with_tree(fs, rfs, actual_git_dir, entries, tree_id)
@@ -1579,6 +1583,8 @@ pub fn commit_amend(
   committer_timestamp? : Int64 = author_timestamp,
   timezone? : String = "+0000",
   encoding? : String = "UTF-8",
+  author_timezone? : String? = None,
+  committer_timezone? : String? = None,
 ) -> @bit.ObjectId raise @bit.GitError {
   let git_dir = join_path(root, ".git")
   let actual_git_dir = if rfs.is_file(git_dir) {
@@ -1608,15 +1614,17 @@ pub fn commit_amend(
     }
     None => []
   }
+  let resolved_author_timezone = author_timezone.unwrap_or(timezone)
+  let resolved_committer_timezone = committer_timezone.unwrap_or(timezone)
   let commit = @bit.Commit::new(
     tree_id,
     parents,
     author,
     author_timestamp,
-    timezone,
+    resolved_author_timezone,
     committer,
     committer_timestamp,
-    timezone,
+    resolved_committer_timezone,
     message,
     encoding~,
   )
@@ -1632,7 +1640,7 @@ pub fn commit_amend(
     "commit (amend): " + worktree_commit_subject(message),
     committer~,
     timestamp=committer_timestamp,
-    timezone~,
+    timezone=resolved_committer_timezone,
   )
   commit_id
 }

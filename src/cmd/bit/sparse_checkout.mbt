@@ -32,6 +32,133 @@ fn sparse_checkout_cone_flag(args : Array[String]) -> Bool? {
 }
 
 ///|
+fn sparse_checkout_effective_cone_mode(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  cone_flag : Bool?,
+) -> Bool {
+  match cone_flag {
+    Some(flag) => flag
+    None =>
+      if @bitlib.is_sparse_checkout_enabled(rfs, git_dir) {
+        @bitlib.is_sparse_checkout_cone_enabled(rfs, git_dir)
+      } else {
+        true
+      }
+  }
+}
+
+///|
+fn sparse_checkout_has_skip_checks_flag(args : Array[String]) -> Bool {
+  for arg in args {
+    if arg == "--skip-checks" {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn sparse_checkout_pattern_has_glob_magic(pattern : String) -> Bool {
+  pattern.contains("*") ||
+  pattern.contains("?") ||
+  pattern.contains("[") ||
+  pattern.contains("\\")
+}
+
+///|
+fn sparse_checkout_normalize_literal_pattern(pattern : String) -> String? {
+  let trimmed = pattern.trim().to_string()
+  if trimmed.length() == 0 || trimmed == "/*" || trimmed == "!/*/" {
+    return None
+  }
+  if trimmed.has_prefix("!") || sparse_checkout_pattern_has_glob_magic(trimmed) {
+    return None
+  }
+  let without_leading = if trimmed.has_prefix("/") {
+    String::unsafe_substring(trimmed, start=1, end=trimmed.length())
+  } else {
+    trimmed
+  }
+  let normalized = if without_leading.has_suffix("/") &&
+    without_leading.length() > 1 {
+    String::unsafe_substring(
+      without_leading,
+      start=0,
+      end=without_leading.length() - 1,
+    )
+  } else {
+    without_leading
+  }
+  if normalized.length() == 0 {
+    None
+  } else {
+    Some(normalized)
+  }
+}
+
+///|
+fn sparse_checkout_path_is_directory_like(
+  rfs : &@bitcore.RepoFileSystem,
+  root : String,
+  path : String,
+) -> Bool raise Error {
+  let worktree_path = root + "/" + path
+  if rfs.is_dir(worktree_path) {
+    return true
+  }
+  if rfs.is_file(worktree_path) {
+    return false
+  }
+  let git_dir = resolve_git_dir(rfs, root)
+  if not(rfs.is_file(git_dir + "/index")) {
+    return false
+  }
+  let entries = @bitlib.read_index_entries(rfs, git_dir)
+  for entry in entries {
+    if entry.path.has_prefix(path + "/") {
+      return true
+    }
+    if entry.path == path {
+      return false
+    }
+  }
+  false
+}
+
+///|
+fn sparse_checkout_validate_literal_patterns(
+  rfs : &@bitcore.RepoFileSystem,
+  root : String,
+  patterns : Array[String],
+  cone_mode : Bool,
+  skip_checks : Bool,
+) -> String? raise Error {
+  if skip_checks {
+    return None
+  }
+  for pattern in patterns {
+    match sparse_checkout_normalize_literal_pattern(pattern) {
+      Some(path) =>
+        if not(sparse_checkout_path_is_directory_like(rfs, root, path)) {
+          if cone_mode {
+            raise @bitcore.GitError::InvalidObject(
+              "\{pattern} is not a directory",
+            )
+          }
+          if not(pattern.has_prefix("/")) {
+            return Some(
+              "warning: pass a leading slash before paths such as '\{pattern}' if you want a single file",
+            )
+          }
+        }
+      _ => ()
+    }
+  }
+  None
+}
+
+///|
 async fn sparse_checkout_parse_pattern_args(
   subcmd : String,
   args : Array[String],
@@ -46,6 +173,7 @@ async fn sparse_checkout_parse_pattern_args(
     }
     match arg {
       "--stdin" => read_from_stdin = true
+      "--skip-checks" => ()
       "--cone" => ()
       "--no-cone" => ()
       "--sparse-index" => ()
@@ -113,7 +241,7 @@ fn sparse_checkout_list_state(
 ///|
 fn sparse_checkout_trim_cr(line : String) -> String {
   if line.has_suffix("\r") {
-    line[:line.length() - 1].to_string()
+    String::unsafe_substring(line, start=0, end=line.length() - 1)
   } else {
     line
   }
@@ -122,10 +250,16 @@ fn sparse_checkout_trim_cr(line : String) -> String {
 ///|
 fn sparse_checkout_unquote_c_style(text : String) -> String {
   let trimmed = sparse_checkout_trim_cr(text)
-  if trimmed.length() < 2 || !trimmed.has_prefix("\"") || !trimmed.has_suffix("\"") {
+  if trimmed.length() < 2 ||
+    !trimmed.has_prefix("\"") ||
+    !trimmed.has_suffix("\"") {
     return trimmed
   }
-  let inner = trimmed[1:trimmed.length() - 1].to_string()
+  let inner = String::unsafe_substring(
+    trimmed,
+    start=1,
+    end=trimmed.length() - 1,
+  )
   let buf = StringBuilder::new()
   let mut escape = false
   for c in inner {
@@ -155,7 +289,9 @@ fn sparse_checkout_unquote_c_style(text : String) -> String {
 }
 
 ///|
-fn sparse_checkout_compile_cone_patterns(patterns : Array[String]) -> Array[String] {
+fn sparse_checkout_compile_cone_patterns(
+  patterns : Array[String],
+) -> Array[String] {
   let out = @bitlib.sparse_default_patterns()
   for pattern in patterns {
     if pattern == "/*" || pattern == "!/*/" {
@@ -163,12 +299,12 @@ fn sparse_checkout_compile_cone_patterns(patterns : Array[String]) -> Array[Stri
     }
     let anchored = if pattern.has_prefix("/") { pattern } else { "/" + pattern }
     let trimmed = if anchored.has_suffix("/") && anchored.length() > 1 {
-      anchored[:anchored.length() - 1].to_string()
+      String::unsafe_substring(anchored, start=0, end=anchored.length() - 1)
     } else {
       anchored
     }
     let relative = if trimmed.has_prefix("/") {
-      trimmed[1:].to_string()
+      String::unsafe_substring(trimmed, start=1, end=trimmed.length())
     } else {
       trimmed
     }
@@ -330,16 +466,11 @@ async fn sparse_checkout_run_check_rules(
   args : Array[String],
 ) -> Unit raise Error {
   let (patterns, nul_terminated) = sparse_checkout_read_check_rules_patterns(
-    fs,
-    root,
-    git_dir,
-    args,
+    fs, root, git_dir, args,
   )
   let input = decode_bytes(read_all_stdin())
   let output = sparse_checkout_filter_check_rules_input(
-    input,
-    patterns,
-    nul_terminated,
+    input, patterns, nul_terminated,
   )
   @stdio.stdout.write(output)
 }
@@ -360,10 +491,7 @@ fn sparse_checkout_unique_push(paths : Array[String], path : String) -> Unit {
 }
 
 ///|
-fn sparse_checkout_clean_covers_path(
-  root : String,
-  path : String,
-) -> Bool {
+fn sparse_checkout_clean_covers_path(root : String, path : String) -> Bool {
   path == root || path.has_prefix(root + "/")
 }
 
@@ -382,11 +510,7 @@ fn sparse_checkout_clean_managed_root(
   }
   let mut prefix = ""
   for i in 0..<parts.length() {
-    prefix = if prefix == "" {
-      parts[i]
-    } else {
-      prefix + "/" + parts[i]
-    }
+    prefix = if prefix == "" { parts[i] } else { prefix + "/" + parts[i] }
     let has_skipped = skipped_paths.any(fn(item) {
       sparse_checkout_clean_covers_path(prefix, item)
     })
@@ -471,14 +595,16 @@ async fn sparse_checkout_warn_reapply_preserved_paths(
   }
   for path in status.untracked {
     match sparse_checkout_clean_managed_root(path, skipped_paths, kept_paths) {
-      Some(clean_root) => sparse_checkout_unique_push(untracked_roots, clean_root)
+      Some(clean_root) =>
+        sparse_checkout_unique_push(untracked_roots, clean_root)
       None => ()
     }
   }
   for item in @bitlib.read_unmerged_paths(fs, git_dir).to_array() {
     let (path, _) = item
     match sparse_checkout_clean_managed_root(path, skipped_paths, kept_paths) {
-      Some(clean_root) => sparse_checkout_unique_push(unmerged_roots, clean_root)
+      Some(clean_root) =>
+        sparse_checkout_unique_push(unmerged_roots, clean_root)
       None => ()
     }
   }
@@ -568,9 +694,7 @@ async fn sparse_checkout_run_clean(
     @sys.exit(1)
   }
 
-  if !force &&
-    !dry_run &&
-    sparse_checkout_clean_requires_force(fs, git_dir) {
+  if !force && !dry_run && sparse_checkout_clean_requires_force(fs, git_dir) {
     @stdio.stderr.write(
       "fatal: clean.requireForce defaults to true and neither -i, -n, nor -f given; refusing to clean",
     )
@@ -720,16 +844,12 @@ async fn handle_sparse_checkout_at_root(
     }
     "set" => {
       let cone_flag = sparse_checkout_cone_flag(rest)
+      let skip_checks = sparse_checkout_has_skip_checks_flag(rest)
+      let effective_cone = sparse_checkout_effective_cone_mode(
+        fs, git_dir, cone_flag,
+      )
       if not(@bitlib.is_sparse_checkout_enabled(fs, git_dir)) {
-        @bitlib.sparse_checkout_init(
-          fs,
-          fs,
-          root,
-          cone=match cone_flag {
-            Some(flag) => flag
-            None => false
-          },
-        )
+        @bitlib.sparse_checkout_init(fs, fs, root, cone=effective_cone)
       }
       match cone_flag {
         Some(flag) => @bitlib.sparse_set_cone_config(fs, fs, git_dir, flag)
@@ -740,6 +860,13 @@ async fn handle_sparse_checkout_at_root(
         @bitlib.sparse_default_patterns()
       } else {
         patterns
+      }
+      match
+        sparse_checkout_validate_literal_patterns(
+          fs, root, patterns, effective_cone, skip_checks,
+        ) {
+        Some(msg) => eprint_line(msg)
+        None => ()
       }
       @bitlib.sparse_checkout_set(fs, fs, root, patterns)
       match sparse_index_flag {
@@ -753,9 +880,28 @@ async fn handle_sparse_checkout_at_root(
       print_line("Sparse checkout patterns set")
     }
     "add" => {
+      let cone_flag = sparse_checkout_cone_flag(rest)
+      let skip_checks = sparse_checkout_has_skip_checks_flag(rest)
+      let effective_cone = sparse_checkout_effective_cone_mode(
+        fs, git_dir, cone_flag,
+      )
+      if not(@bitlib.is_sparse_checkout_enabled(fs, git_dir)) {
+        @bitlib.sparse_checkout_init(fs, fs, root, cone=effective_cone)
+      }
+      match cone_flag {
+        Some(flag) => @bitlib.sparse_set_cone_config(fs, fs, git_dir, flag)
+        None => ()
+      }
       let patterns = sparse_checkout_parse_pattern_args("add", rest)
       if patterns.length() == 0 {
         raise @bitcore.GitError::InvalidObject("patterns required for add")
+      }
+      match
+        sparse_checkout_validate_literal_patterns(
+          fs, root, patterns, effective_cone, skip_checks,
+        ) {
+        Some(msg) => eprint_line(msg)
+        None => ()
       }
       @bitlib.sparse_checkout_add(fs, fs, root, patterns)
       sparse_checkout_warn_reapply_preserved_paths(fs, root, git_dir)
@@ -784,12 +930,8 @@ async fn handle_sparse_checkout_at_root(
       @bitlib.sparse_checkout_reapply(fs, fs, root)
       sparse_checkout_warn_reapply_preserved_paths(fs, root, git_dir)
     }
-    "check-rules" => {
-      sparse_checkout_run_check_rules(fs, root, git_dir, rest)
-    }
-    "clean" => {
-      sparse_checkout_run_clean(fs, root, git_dir, rest)
-    }
+    "check-rules" => sparse_checkout_run_check_rules(fs, root, git_dir, rest)
+    "clean" => sparse_checkout_run_clean(fs, root, git_dir, rest)
     "disable" => {
       sparse_checkout_warn_reapply_preserved_paths(fs, root, git_dir)
       @bitlib.sparse_checkout_disable(fs, fs, root)

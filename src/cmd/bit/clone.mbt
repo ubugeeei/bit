@@ -20,6 +20,19 @@ fn clone_command_root(fallback_root : String) -> String {
 }
 
 ///|
+fn clone_maybe_enable_sparse_checkout(
+  fs : OsFs,
+  root : String,
+  sparse_checkout : Bool,
+  bare : Bool,
+) -> Unit raise Error {
+  if not(sparse_checkout) || bare {
+    return
+  }
+  @bitlib.sparse_checkout_init(fs, fs, root, cone=true)
+}
+
+///|
 async fn handle_clone(args : Array[String]) -> Unit raise Error {
   let fallback_root = get_work_root()
   let command_root = clone_command_root(fallback_root)
@@ -40,6 +53,7 @@ async fn handle_clone(args : Array[String]) -> Unit raise Error {
   let mut reject_shallow = false
   let mut quiet = false
   let mut skip_hooks = false
+  let mut sparse_checkout = false
   let mut remote_name = "origin"
   let mut ref_spec : String? = None
   let mut ref_format = clone_default_ref_format()
@@ -138,6 +152,16 @@ async fn handle_clone(args : Array[String]) -> Unit raise Error {
     }
     if arg == "--skip-hooks" {
       skip_hooks = true
+      i += 1
+      continue
+    }
+    if arg == "--sparse" {
+      sparse_checkout = true
+      i += 1
+      continue
+    }
+    if arg == "--no-sparse" {
+      sparse_checkout = false
       i += 1
       continue
     }
@@ -778,6 +802,7 @@ async fn handle_clone(args : Array[String]) -> Unit raise Error {
     _ => []
   }
   emit_clone_bundle_trace_events(fs, bundle_uris)
+  clone_maybe_enable_sparse_checkout(fs, clone_root, sparse_checkout, bare)
   if recurse_submodules && not(bare) && not(no_checkout) {
     clone_configure_submodule_active_filters(
       fs, clone_git_dir, recurse_submodule_filters,

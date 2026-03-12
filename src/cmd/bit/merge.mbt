@@ -1,8 +1,49 @@
 ///|
+async fn delegate_merge_to_real_git(args : Array[String], cwd : String) -> Unit {
+  let argv : Array[String] = ["merge"]
+  for arg in args {
+    argv.push(arg)
+  }
+  let code = @process.run(
+    resolve_real_git_for_dispatch(),
+    argv,
+    inherit_env=true,
+    cwd~,
+    stdin=@stdio.stdin,
+    stdout=@stdio.stdout,
+    stderr=@stdio.stderr,
+  )
+  @sys.exit(code)
+}
+
+///|
+fn merge_need_real_git(args : Array[String]) -> Bool {
+  for arg in args {
+    if arg == "-s" ||
+      arg == "--strategy" ||
+      arg == "-X" ||
+      arg == "--strategy-option" ||
+      arg == "--allow-unrelated-histories" ||
+      arg.has_prefix("--strategy=") ||
+      arg.has_prefix("--strategy-option=") ||
+      (arg.has_prefix("-X") && not(arg.has_prefix("--")) && arg.length() > 2) ||
+      (arg.has_prefix("-s") && not(arg.has_prefix("--")) && arg.length() > 2) {
+      return true
+    }
+  }
+  false
+}
+
+///|
 async fn handle_merge(args : Array[String]) -> Unit raise Error {
+  let root = get_work_root()
+  let cwd = root
+  if merge_need_real_git(args) {
+    delegate_merge_to_real_git(args, cwd)
+    return
+  }
   let fs = OsFs::new()
   let rfs : &@bitcore.RepoFileSystem = fs
-  let root = get_work_root()
   check_and_exit_unsupported_attrs(root)
   let git_dir = root + "/.git"
   let wfs : &@bitcore.FileSystem = fs
@@ -129,7 +170,23 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
     }
     let author = get_author_string()
     let timestamp = get_commit_timestamp()
-    let commit_id = @bitlib.commit(wfs, rfs, root, msg, author, timestamp)
+    let merge_heads = read_merge_head_ids(rfs, git_dir)
+    let commit_id = if merge_heads.length() > 0 {
+      commit_with_merge_heads(
+        wfs,
+        rfs,
+        root,
+        msg,
+        author,
+        timestamp,
+        author,
+        timestamp,
+        merge_heads,
+        false,
+      )
+    } else {
+      @bitlib.commit(wfs, rfs, root, msg, author, timestamp)
+    }
     let short = String::unsafe_substring(commit_id.to_hex(), start=0, end=7)
     // Clean up merge state
     wfs.remove_file(merge_head_path) catch {
@@ -165,6 +222,10 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
   let target_id = @bitrepo.rev_parse(fs, git_dir, refspec)
   guard target_id is Some(tid) else {
     raise @bitcore.GitError::InvalidObject("unknown revision: \{refspec}")
+  }
+  if merge_target_requires_real_git(rfs, git_dir, tid) {
+    delegate_merge_to_real_git(args, cwd)
+    return
   }
   let author = get_author_string()
   let timestamp = get_commit_timestamp()
@@ -305,6 +366,21 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
       print_line("Automatic merge failed; fix conflicts and then commit.")
       @sys.exit(1)
     }
+  }
+}
+
+///|
+fn merge_target_requires_real_git(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  target_id : @bitcore.ObjectId,
+) -> Bool {
+  (match @bitlib.ObjectDb::load_lazy(rfs, git_dir).get(rfs, target_id) {
+    Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit =>
+      @bitcore.parse_commit(obj.data).parents.length() > 1
+    _ => false
+  }) catch {
+    _ => false
   }
 }
 

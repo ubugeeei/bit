@@ -269,7 +269,7 @@ test "storage runtime: init/add/commit/status/log on TestFs" {
 }
 
 ///|
-test "storage runtime: commit keeps committer timezone in object and reflog" {
+test "storage runtime: commit keeps distinct author and committer dates" {
   let fs = @bit.TestFs::new()
   let root = "/repo-storage-runtime-commit-timezone"
   let prev_quiet = setup_storage_runtime_quiet_for_wbtest()
@@ -280,7 +280,7 @@ test "storage runtime: commit keeps committer timezone in object and reflog" {
     prev_committer_email,
   ) = setup_identity_for_storage_runtime_wbtest()
   let (prev_author_date, prev_committer_date) = setup_commit_date_for_storage_runtime_wbtest(
-    "1112911993 -0700", "1112911993 -0700",
+    "1112911993 -0700", "1112912001 +0900",
   )
   run_storage_command(fs, fs, root, storage_runtime_wbtest_init_command()) catch {
     err => fail("init failed: \{err}")
@@ -315,11 +315,11 @@ test "storage runtime: commit keeps committer timezone in object and reflog" {
   )
   assert_true(
     commit_text.contains(
-      "committer Storage Test <storage@example.com> 1112911993 -0700",
+      "committer Storage Test <storage@example.com> 1112912001 +0900",
     ),
   )
   assert_eq(reflog_entries.length(), 1)
-  assert_eq(reflog_entries[0].timezone, "-0700")
+  assert_eq(reflog_entries[0].timezone, "+0900")
   restore_commit_date_for_storage_runtime_wbtest(
     prev_author_date, prev_committer_date,
   )
