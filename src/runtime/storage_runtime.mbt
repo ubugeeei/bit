@@ -670,9 +670,9 @@ fn storage_handle_commit(
     committer_timezone=Some(timezone),
   )
   if not(args.quiet) {
-    let short_id = (try! commit_id.to_hex()[:7]).to_string()
+    let short_id = String::unsafe_substring(commit_id.to_hex(), start=0, end=7)
     let first_line = match args.message.find("\n") {
-      Some(idx) => (try! args.message[:idx]).to_string()
+      Some(idx) => String::unsafe_substring(args.message, start=0, end=idx)
       None => args.message
     }
     storage_print_line("[" + short_id + "] " + first_line)
@@ -896,7 +896,7 @@ fn storage_status_porcelain_branch_line(
   match @bitlib.read_head_ref(rfs, git_dir) {
     @bitlib.HeadRef::Branch(name) => "## " + name
     @bitlib.HeadRef::Detached(id) => {
-      let short_id = (try! id.to_hex()[:7]).to_string()
+      let short_id = String::unsafe_substring(id.to_hex(), start=0, end=7)
       "## HEAD (detached at " + short_id + ")"
     }
   }
@@ -978,7 +978,7 @@ fn storage_status_text_lines(
   match @bitlib.read_head_ref(rfs, git_dir) {
     @bitlib.HeadRef::Branch(name) => out.push("On branch " + name)
     @bitlib.HeadRef::Detached(id) => {
-      let short_id = (try! id.to_hex()[:7]).to_string()
+      let short_id = String::unsafe_substring(id.to_hex(), start=0, end=7)
       out.push("HEAD detached at " + short_id)
     }
   }

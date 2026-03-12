@@ -363,8 +363,8 @@ test "storage runtime: hash-object -w and write-tree work on TestFs" {
     fs.read_file(root + "/blob.txt"),
   )
   let blob_hex = blob_id.to_hex()
-  let dir = (try! blob_hex[:2]).to_string()
-  let rest = (try! blob_hex[2:]).to_string()
+  let dir = String::unsafe_substring(blob_hex, start=0, end=2)
+  let rest = String::unsafe_substring(blob_hex, start=2, end=blob_hex.length())
   let object_path = root + "/.git/objects/" + dir + "/" + rest
   assert_true(fs.is_file(object_path))
   run_storage_command(fs, fs, root, storage_runtime_wbtest_write_tree_command()) catch {
@@ -688,7 +688,7 @@ test "storage runtime: status porcelain detached head branch line" {
     ),
   )
   fs.write_string(root + "/.git/HEAD", head_full + "\n")
-  let short = (try! head_full[:7]).to_string()
+  let short = String::unsafe_substring(head_full, start=0, end=7)
   let lines = storage_status_porcelain_lines(fs, root, true) catch {
     err => {
       fail("status lines failed: \{err}")

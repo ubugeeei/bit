@@ -906,7 +906,7 @@ fn count_path_depth(path : String) -> Int {
 /// 相対パスを構築（../ を depth 回）
 fn _build_relative_path(depth : Int, subdir_path : String) -> String {
   let result = StringBuilder::new()
-  for i in 0..<depth {
+  for _ in 0..<depth {
     result.write_string("../")
   }
   result.write_string(subdir_path)
@@ -917,7 +917,7 @@ fn _build_relative_path(depth : Int, subdir_path : String) -> String {
 /// gitdir パスを構築
 fn build_gitdir_path(depth : Int, module_name : String) -> String {
   let result = StringBuilder::new()
-  for i in 0..<depth {
+  for _ in 0..<depth {
     result.write_string("../")
   }
   result.write_string(".git/modules/")
