@@ -236,16 +236,12 @@ fn relay_ws_url(
   base_url : String,
   room : String,
   room_token~ : String?,
-) -> String raise @bit.GitError {
+) -> String {
   let ws_base = if base_url.has_prefix("https://") {
-    let rest = base_url[8:].to_string() catch {
-      _ => raise @bit.GitError::InvalidObject("invalid base_url: \{base_url}")
-    }
+    let rest = String::unsafe_substring(base_url, start=8, end=base_url.length())
     "wss://" + rest
   } else if base_url.has_prefix("http://") {
-    let rest = base_url[7:].to_string() catch {
-      _ => raise @bit.GitError::InvalidObject("invalid base_url: \{base_url}")
-    }
+    let rest = String::unsafe_substring(base_url, start=7, end=base_url.length())
     "ws://" + rest
   } else {
     "ws://" + base_url
