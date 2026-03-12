@@ -17,7 +17,42 @@ async fn delegate_merge_to_real_git(args : Array[String], cwd : String) -> Unit 
 }
 
 ///|
+fn merge_count_merge_heads(args : Array[String]) -> Int {
+  let mut count = 0
+  let mut i = 0
+  while i < args.length() {
+    let arg = args[i]
+    match arg {
+      "-m" | "--message" | "-s" | "--strategy" | "-X" | "--strategy-option" => {
+        i += 2
+        continue
+      }
+      _ if arg.has_prefix("--message=") ||
+        arg.has_prefix("--strategy=") ||
+        arg.has_prefix("--strategy-option=") ||
+        (arg.has_prefix("-m") && not(arg.has_prefix("--")) && arg.length() > 2) ||
+        (arg.has_prefix("-X") && not(arg.has_prefix("--")) && arg.length() > 2) ||
+        (arg.has_prefix("-s") && not(arg.has_prefix("--")) && arg.length() > 2) =>
+        ()
+      "--no-ff"
+      | "--ff-only"
+      | "--squash"
+      | "--abort"
+      | "--continue"
+      | "--allow-unrelated-histories" => ()
+      _ if not(arg.has_prefix("-")) => count += 1
+      _ => ()
+    }
+    i += 1
+  }
+  count
+}
+
+///|
 fn merge_need_real_git(args : Array[String]) -> Bool {
+  if merge_count_merge_heads(args) > 1 {
+    return true
+  }
   for arg in args {
     if arg == "-s" ||
       arg == "--strategy" ||
@@ -173,16 +208,7 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
     let merge_heads = read_merge_head_ids(rfs, git_dir)
     let commit_id = if merge_heads.length() > 0 {
       commit_with_merge_heads(
-        wfs,
-        rfs,
-        root,
-        msg,
-        author,
-        timestamp,
-        author,
-        timestamp,
-        merge_heads,
-        false,
+        wfs, rfs, root, msg, author, timestamp, author, timestamp, merge_heads, false,
       )
     } else {
       @bitlib.commit(wfs, rfs, root, msg, author, timestamp)
@@ -375,11 +401,13 @@ fn merge_target_requires_real_git(
   git_dir : String,
   target_id : @bitcore.ObjectId,
 ) -> Bool {
-  (match @bitlib.ObjectDb::load_lazy(rfs, git_dir).get(rfs, target_id) {
-    Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit =>
-      @bitcore.parse_commit(obj.data).parents.length() > 1
-    _ => false
-  }) catch {
+  try {
+    match @bitlib.ObjectDb::load_lazy(rfs, git_dir).get(rfs, target_id) {
+      Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit =>
+        @bitcore.parse_commit(obj.data).parents.length() > 1
+      _ => false
+    }
+  } catch {
     _ => false
   }
 }

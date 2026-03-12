@@ -17,6 +17,8 @@ test "merge: strategy options fall back to real git" {
   assert_true(merge_need_real_git(["-Xtheirs", "topic"]))
   assert_true(merge_need_real_git(["--strategy-option=theirs", "topic"]))
   assert_true(merge_need_real_git(["--allow-unrelated-histories", "topic"]))
+  assert_true(merge_need_real_git(["side", "another"]))
+  assert_true(merge_need_real_git(["-m", "octopus", "side", "another"]))
   assert_false(merge_need_real_git(["--squash", "topic"]))
 }
 
@@ -110,9 +112,7 @@ async test "merge: command path falls back when target is a merge commit" {
   grep_test_run_git(repo_dir, ["commit", "-q", "-am", "Y"])
 
   grep_test_run_git(repo_dir, ["switch", "-q", "-c", "branchR", "M"])
-  grep_test_run_git(repo_dir, [
-    "merge", "-q", "-m", "R", "-Xtheirs", "branchY",
-  ])
+  grep_test_run_git(repo_dir, ["merge", "-q", "-m", "R", "-Xtheirs", "branchY"])
 
   grep_test_run_git(repo_dir, ["switch", "-q", "topic"])
   @sys.set_env_var("GIT_SHIM_PWD", repo_dir)
@@ -191,5 +191,55 @@ async test "merge: --continue records MERGE_HEAD as second parent" {
     Some(value) => @sys.set_env_var("GIT_SHIM_PWD", value)
     None => @sys.unset_env_var("GIT_SHIM_PWD")
   }
+  cleanup_tree(fs, root)
+}
+
+///|
+async test "merge: command path supports octopus merge via fallback" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-merge-octopus-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  grep_test_run_git(root, ["init", "--initial-branch=main", "-q", "repo"])
+  grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  grep_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+
+  fs.write_string(repo_dir + "/base.txt", "base\n")
+  grep_test_run_git(repo_dir, ["add", "base.txt"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "base"])
+
+  grep_test_run_git(repo_dir, ["checkout", "-q", "-b", "side"])
+  fs.write_string(repo_dir + "/side.txt", "side\n")
+  grep_test_run_git(repo_dir, ["add", "side.txt"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "side"])
+
+  grep_test_run_git(repo_dir, ["checkout", "-q", "-b", "another", "main"])
+  fs.write_string(repo_dir + "/another.txt", "another\n")
+  grep_test_run_git(repo_dir, ["add", "another.txt"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "another"])
+
+  grep_test_run_git(repo_dir, ["checkout", "-q", "main"])
+  fs.write_string(repo_dir + "/main.txt", "main\n")
+  grep_test_run_git(repo_dir, ["add", "main.txt"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "main"])
+  grep_test_run_git(repo_dir, [
+    "merge", "-q", "-m", "octopus", "side", "another",
+  ])
+
+  let git_dir = repo_dir + "/.git"
+  let head = @bitlib.resolve_head_commit(fs, git_dir).unwrap()
+  let db = @bitlib.ObjectDb::load_lazy(fs, git_dir)
+  let commit_obj = db.get(fs, head).unwrap()
+  let info = @bitcore.parse_commit(commit_obj.data)
+  assert_eq(info.parents.length(), 3)
+  assert_eq(
+    trim_string(grep_test_git_stdout(repo_dir, ["log", "-1", "--format=%s"])),
+    "octopus",
+  )
+
   cleanup_tree(fs, root)
 }

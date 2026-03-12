@@ -188,12 +188,17 @@ fn log_need_real_git(args : Array[String]) -> Bool {
     }
     if arg == "--name-only" ||
       arg == "--name-status" ||
+      arg == "--stat" ||
+      arg == "--stdin" ||
+      arg == "--graph" ||
+      arg == "--boundary" ||
       arg == "--parents" ||
       arg == "--full-history" ||
       arg == "--topo-order" ||
       arg == "--date-order" ||
       arg == "--author-date-order" ||
       arg == "--ancestry-path" ||
+      arg == "--simplify-by-decoration" ||
       arg == "--simplify-merges" ||
       arg == "--show-pulls" ||
       arg == "--exclude-first-parent-only" ||

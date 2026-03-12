@@ -280,6 +280,35 @@ fn show_render_tree_lines(
 }
 
 ///|
+fn show_graft_deprecation_advice_lines() -> Array[String] {
+  [
+    "hint: Support for <GIT_DIR>/info/grafts is deprecated", "hint: and will be removed in a future Git version.",
+    "hint:", "hint: Please use \"git replace --convert-graft-file\"", "hint: to convert the grafts into replace refs.",
+    "hint:", "hint: Turn this message off by running", "hint: \"git config set advice.graftFileDeprecated false\"",
+  ]
+}
+
+///|
+async fn show_maybe_print_graft_deprecation_advice(
+  fs : OsFs,
+  git_dir : String,
+) -> Unit raise Error {
+  let common_git_dir = log_resolve_common_git_dir(fs, git_dir)
+  let graft_path = common_git_dir + "/info/grafts"
+  guard fs.is_file(graft_path) else { return }
+  let show_advice = @bitlib.read_config_bool(
+    fs,
+    common_git_dir + "/config",
+    "advice",
+    "graftfiledeprecated",
+  ).unwrap_or(true)
+  guard show_advice else { return }
+  for line in show_graft_deprecation_advice_lines() {
+    eprint_line(line)
+  }
+}
+
+///|
 fn show_parse_args(args : Array[String]) -> ShowArgs {
   let revs : Array[String] = []
   let range_excludes : Array[String] = []
@@ -640,6 +669,7 @@ async fn handle_show(args : Array[String]) -> Unit raise Error {
   let fs = OsFs::new()
   let git_dir = resolve_git_dir(fs, root)
   check_and_exit_unsupported_attrs(root)
+  show_maybe_print_graft_deprecation_advice(fs, git_dir)
   let options = show_parse_args(args)
   if options.graph_requested {
     raise @bitcore.GitError::InvalidObject(

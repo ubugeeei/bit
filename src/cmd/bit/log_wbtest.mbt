@@ -107,8 +107,13 @@ test "log: revision input handles caret and not-mode excludes" {
 
 ///|
 test "log: ancestry and simplify options fall back to real git" {
+  assert_true(log_need_real_git(["--stat"]))
+  assert_true(log_need_real_git(["--stdin"]))
+  assert_true(log_need_real_git(["--graph"]))
+  assert_true(log_need_real_git(["--boundary"]))
   assert_true(log_need_real_git(["--ancestry-path"]))
   assert_true(log_need_real_git(["--ancestry-path=topic"]))
+  assert_true(log_need_real_git(["--simplify-by-decoration"]))
   assert_true(log_need_real_git(["--simplify-merges"]))
   assert_true(log_need_real_git(["--parents"]))
   assert_true(log_need_real_git(["--full-history"]))

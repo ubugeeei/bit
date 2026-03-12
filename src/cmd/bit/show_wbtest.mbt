@@ -4,6 +4,61 @@ fn show_wbtest_zero_id() -> @bitcore.ObjectId {
 }
 
 ///|
+async fn show_wbtest_run_git(
+  root : String,
+  args : Array[String],
+) -> Unit raise Error {
+  let code = @process.run("git", args[:], inherit_env=true, cwd=root)
+  assert_eq(code, 0)
+}
+
+///|
+async fn show_wbtest_git_stdout(
+  root : String,
+  args : Array[String],
+) -> String raise Error {
+  let (code, stdout) = @process.collect_stdout(
+    "git",
+    args[:],
+    inherit_env=true,
+    cwd=root,
+  )
+  assert_eq(code, 0)
+  stdout.text() catch {
+    _ => ""
+  }
+}
+
+///|
+async fn show_wbtest_collect_shim_git_stderr(
+  cwd : String,
+  args : Array[String],
+) -> (Int, String) raise Error {
+  let repo_root = @env.current_dir().unwrap_or(".")
+  let shim_git = repo_root + "/tools/git-shim/bin/git"
+  let env : Map[String, String] = {
+    "SHIM_REAL_GIT": repo_root + "/third_party/git/git",
+    "SHIM_REAL_GIT_FALLBACK": "",
+    "SHIM_EXEC_PATH": repo_root + "/third_party/git",
+    "SHIM_MOON": repo_root + "/tools/git-shim/moon",
+    "SHIM_CMDS": "show",
+    "SHIM_STRICT": "1",
+  }
+  let git_args : Array[String] = ["-C", cwd]
+  for arg in args {
+    git_args.push(arg)
+  }
+  let (code, stderr) = @process.collect_stderr(
+    shim_git,
+    git_args[:],
+    extra_env=env,
+    inherit_env=true,
+  )
+  let text = stderr.text() catch { _ => "" }
+  (code, text)
+}
+
+///|
 test "show: render tree lines adds trailing slash for directories" {
   let zero = show_wbtest_zero_id()
   let lines = show_render_tree_lines("HEAD^{tree}", [
@@ -133,4 +188,50 @@ test "show: reference pretty format delegates to real git" {
   assert_true(show_requires_real_git(["-s", "--pretty=reference", "HEAD"]))
   assert_true(show_requires_real_git(["--format=reference", "HEAD"]))
   assert_false(show_requires_real_git(["-s", "--pretty=%s", "HEAD"]))
+}
+
+///|
+async test "show: command path prints graft deprecation advice and honors config" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-show-grafts-" + get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  show_wbtest_run_git(root, ["init", "-q", "repo"])
+  fs.write_string(repo_dir + "/a.txt", "first\n")
+  show_wbtest_run_git(repo_dir, ["add", "a.txt"])
+  show_wbtest_run_git(repo_dir, ["commit", "-q", "-m", "first"])
+  fs.write_string(repo_dir + "/a.txt", "first\nsecond\n")
+  show_wbtest_run_git(repo_dir, ["commit", "-qam", "second"])
+
+  let head = show_wbtest_git_stdout(repo_dir, ["rev-parse", "HEAD"])
+    .trim()
+    .to_string()
+  let parent = show_wbtest_git_stdout(repo_dir, ["rev-parse", "HEAD^"])
+    .trim()
+    .to_string()
+  fs.mkdir_p(repo_dir + "/.git/info")
+  fs.write_string(repo_dir + "/.git/info/grafts", head + " " + parent + "\n")
+
+  let (code, stderr) = show_wbtest_collect_shim_git_stderr(repo_dir, [
+    "show", "HEAD",
+  ])
+  assert_eq(code, 0)
+  assert_eq(stderr, show_graft_deprecation_advice_lines().join("\n") + "\n")
+
+  fs.write_string(
+    repo_dir + "/.git/config",
+    decode_bytes(fs.read_file(repo_dir + "/.git/config")) +
+    "\n[advice]\n\tgraftFileDeprecated = false\n",
+  )
+  let (suppressed_code, suppressed_stderr) = show_wbtest_collect_shim_git_stderr(
+    repo_dir,
+    ["show", "HEAD"],
+  )
+  assert_eq(suppressed_code, 0)
+  assert_eq(suppressed_stderr, "")
+
+  cleanup_tree(fs, root)
 }
