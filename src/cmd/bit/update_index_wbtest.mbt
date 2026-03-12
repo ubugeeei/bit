@@ -60,3 +60,59 @@ test "update-index: preserve symlink mode when restaging existing entry" {
   assert_eq(preserved.length(), 1)
   assert_eq(preserved[0].mode, 0o120000)
 }
+
+///|
+async fn update_index_wbtest_run_git(
+  cwd : String,
+  args : Array[String],
+) -> Unit raise Error {
+  let code = @process.run("git", args[:], inherit_env=true, cwd~)
+  assert_eq(code, 0)
+}
+
+///|
+fn update_index_wbtest_restore_cwd(prev : String?) -> Unit {
+  match prev {
+    Some(value) => @sys.set_env_var("GIT_SHIM_CWD", value)
+    None => @sys.unset_env_var("GIT_SHIM_CWD")
+  }
+}
+
+///|
+async test "update-index: assume-unchanged works for sparse missing path" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-update-index-assume-unchanged-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  update_index_wbtest_run_git(root, ["init", "-q", "repo"])
+  update_index_wbtest_run_git(repo_dir, ["config", "user.name", "Test User"])
+  update_index_wbtest_run_git(repo_dir, [
+    "config", "user.email", "test@example.com",
+  ])
+  fs.write_string(repo_dir + "/a", "text\n")
+  fs.write_string(repo_dir + "/b", "text\n")
+  fs.mkdir_p(repo_dir + "/dir")
+  fs.write_string(repo_dir + "/dir/c", "text\n")
+  update_index_wbtest_run_git(repo_dir, ["add", "a", "b", "dir/c"])
+  update_index_wbtest_run_git(repo_dir, ["commit", "-q", "-m", "initial"])
+
+  let prev_cwd = @sys.get_env_var("GIT_SHIM_CWD")
+  @sys.set_env_var("GIT_SHIM_CWD", repo_dir)
+  handle_sparse_checkout(["init", "--no-cone"])
+  handle_sparse_checkout(["set", "/*", "!b", "!/*/"])
+  assert_false(fs.is_file(repo_dir + "/b"))
+  handle_update_index(["--assume-unchanged", "b"])
+  update_index_wbtest_restore_cwd(prev_cwd)
+
+  let assume_unchanged = @bitlib.read_assume_unchanged_paths(
+    fs,
+    repo_dir + "/.git",
+  )
+  assert_true(assume_unchanged.contains("b"))
+
+  cleanup_tree(fs, root)
+}

@@ -105,6 +105,11 @@ pub fn sparse_checkout_init(
     } else {
       config = config + "[core]\n\tsparseCheckout = true\n"
     }
+  } else if config.contains("sparseCheckout = false") {
+    config = config.replace(
+      old="sparseCheckout = false",
+      new="sparseCheckout = true",
+    )
   }
   // Add cone mode if requested
   if cone && not(config.contains("sparseCheckoutCone")) {
@@ -122,6 +127,7 @@ pub fn sparse_checkout_init(
   if not(rfs.is_file(sparse_path)) {
     fs.write_string(sparse_path, "/*\n!/*/\n")
   }
+  sparse_update_worktree(fs, rfs, root)
 }
 
 ///|
@@ -195,6 +201,7 @@ pub fn sparse_checkout_disable(
       let files = collect_tree_files_from_commit(db, rfs, commit_id)
       write_worktree_from_files(db, fs, rfs, root, git_dir, files)
       let entries = tree_files_to_index(db, rfs, files)
+      write_skip_worktree_paths(fs, git_dir, [])
       write_index_entries(fs, git_dir, entries)
     }
   }
@@ -365,6 +372,7 @@ fn sparse_update_worktree(
       }
       // Write sparse files
       write_worktree_from_files(db, fs, rfs, root, git_dir, sparse_files)
+      ignore(sparse_prune_empty_dirs(fs, rfs, root, root))
       write_skip_worktree_paths(fs, git_dir, skip_paths)
       // Update index with sparse skip-worktree entries.
       let skip_set : Map[String, Bool] = {}
@@ -375,6 +383,46 @@ fn sparse_update_worktree(
       write_index_entries_with_skip_worktree(fs, git_dir, all_entries, skip_set)
     }
   }
+}
+
+///|
+fn sparse_prune_empty_dirs(
+  fs : &@bit.FileSystem,
+  rfs : &@bit.RepoFileSystem,
+  root : String,
+  path : String,
+) -> Bool {
+  if path != root && path.has_prefix(join_path(root, ".git")) {
+    return false
+  }
+  if not(rfs.is_dir(path)) {
+    return false
+  }
+  let entries = rfs.readdir(path) catch { _ => return false }
+  for entry in entries {
+    if entry == "." || entry == ".." {
+      continue
+    }
+    let child = join_path(path, entry)
+    if rfs.is_dir(child) {
+      ignore(sparse_prune_empty_dirs(fs, rfs, root, child))
+    }
+  }
+  let remaining = rfs.readdir(path) catch { _ => return false }
+  let mut has_entries = false
+  for entry in remaining {
+    if entry != "." && entry != ".." {
+      has_entries = true
+      break
+    }
+  }
+  if path != root && not(has_entries) {
+    fs.remove_dir(path) catch {
+      _ => ()
+    }
+    return true
+  }
+  false
 }
 
 ///|

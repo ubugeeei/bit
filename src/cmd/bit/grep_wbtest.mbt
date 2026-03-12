@@ -754,6 +754,44 @@ async fn grep_wbtest_case_assume_unchanged_uses_index_blob() -> Unit raise Error
 }
 
 ///|
+async fn grep_wbtest_case_sparse_checkout_skips_missing_worktree_paths() -> Unit raise Error {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-grep-sparse-skip-worktree-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  grep_test_run_git(root, ["init", "-q", "repo"])
+  grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  grep_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+  fs.write_string(repo_dir + "/a", "text\n")
+  fs.write_string(repo_dir + "/b", "text\n")
+  fs.mkdir_p(repo_dir + "/dir")
+  fs.write_string(repo_dir + "/dir/c", "text\n")
+  grep_test_run_git(repo_dir, ["add", "a", "b", "dir/c"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "initial"])
+  grep_test_run_git(repo_dir, ["sparse-checkout", "init", "--no-cone"])
+  grep_test_run_git(repo_dir, ["sparse-checkout", "set", "/*", "!b", "!/*/"])
+  assert_false(fs.is_file(repo_dir + "/b"))
+  assert_false(fs.is_dir(repo_dir + "/dir"))
+
+  grep_test_run_git(repo_dir, ["sparse-checkout", "disable"])
+  assert_true(fs.is_file(repo_dir + "/b"))
+  assert_true(fs.is_dir(repo_dir + "/dir"))
+  grep_test_run_git(repo_dir, ["sparse-checkout", "init"])
+  assert_false(fs.is_file(repo_dir + "/b"))
+  assert_false(fs.is_dir(repo_dir + "/dir"))
+
+  grep_test_run_git(repo_dir, ["update-index", "--assume-unchanged", "b"])
+  let stdout = grep_test_git_stdout(repo_dir, ["grep", "text"])
+  assert_eq(grep_trim_trailing_newline(stdout), "a:text")
+
+  cleanup_tree(fs, root)
+}
+
+///|
 async fn grep_wbtest_case_break_heading_and_after_context() -> Unit raise Error {
   @bitnative.init_native_io()
   let fs = OsFs::new()
@@ -1426,6 +1464,7 @@ async test "grep: command path cases stay compatible" {
   grep_wbtest_case_quiet_suppresses_output()
   grep_wbtest_case_files_without_match_respects_intent_to_add_modes()
   grep_wbtest_case_assume_unchanged_uses_index_blob()
+  grep_wbtest_case_sparse_checkout_skips_missing_worktree_paths()
   grep_wbtest_case_break_heading_and_after_context()
   grep_wbtest_case_color_output()
   grep_wbtest_case_context_separator_between_files()

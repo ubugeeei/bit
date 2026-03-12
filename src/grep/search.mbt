@@ -63,22 +63,39 @@ pub fn search_tracked_worktree_expr(
 ) -> Array[GrepFileMatch] raise @bit.GitError {
   let index_entries = @bitlib.read_index_entries(fs, git_dir)
   let assume_unchanged_paths = @bitlib.read_assume_unchanged_paths(fs, git_dir)
+  let skip_worktree_paths = @bitlib.read_skip_worktree_paths(fs, git_dir)
   let db = @bitlib.ObjectDb::load(fs, git_dir)
   let matches : Array[GrepFileMatch] = []
   for entry in index_entries {
     if not(grep_path_matches_filters(entry.path, paths, max_depth)) {
       continue
     }
+    let abs_path = root + "/" + entry.path
+    let has_worktree_file = fs.is_file(abs_path)
     let content = if assume_unchanged_paths.contains(entry.path) {
+      if skip_worktree_paths.contains(entry.path) {
+        if not(has_worktree_file) {
+          continue
+        }
+        @utf8.decode_lossy(fs.read_file(abs_path)[:])
+      } else {
+        if entry.intent_to_add {
+          continue
+        }
+        let obj = db.get(fs, entry.id)
+        guard obj is Some(blob) else { continue }
+        @utf8.decode_lossy(blob.data[:])
+      }
+    } else if skip_worktree_paths.contains(entry.path) {
+      if not(has_worktree_file) {
+        continue
+      }
+      @utf8.decode_lossy(fs.read_file(abs_path)[:])
+    } else {
       if entry.intent_to_add {
         continue
       }
-      let obj = db.get(fs, entry.id)
-      guard obj is Some(blob) else { continue }
-      @utf8.decode_lossy(blob.data[:])
-    } else {
-      let abs_path = root + "/" + entry.path
-      if not(fs.is_file(abs_path)) {
+      if not(has_worktree_file) {
         continue
       }
       @utf8.decode_lossy(fs.read_file(abs_path)[:])

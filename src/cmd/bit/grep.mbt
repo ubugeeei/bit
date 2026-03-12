@@ -19,6 +19,7 @@ async fn handle_grep(args : Array[String]) -> Unit raise Error {
   let mut only_matching = false
   let mut invert_match = false
   let mut cached = false
+  let mut recurse_submodules = false
   let mut no_index = false
   let mut search_untracked = false
   let mut null_terminated = false
@@ -159,6 +160,10 @@ async fn handle_grep(args : Array[String]) -> Unit raise Error {
       }
       "--cached" => {
         cached = true
+        i += 1
+      }
+      "--recurse-submodules" => {
+        recurse_submodules = true
         i += 1
       }
       "-C" if i + 1 < args.length() => {
@@ -536,6 +541,17 @@ async fn handle_grep(args : Array[String]) -> Unit raise Error {
           max_depth~,
         )
       }
+  }
+  let raw_matches = if recurse_submodules && not(no_index) && treeish is None {
+    grep_merge_file_matches(
+      raw_matches,
+      grep_collect_recurse_submodule_matches(
+        fs, git_dir, root, "", expr, resolved_paths, pattern_type, ignore_case, invert_match,
+        word_regexp, max_depth, cached, search_untracked,
+      ),
+    )
+  } else {
+    raw_matches
   }
   let matches = grep_limit_file_matches(raw_matches, max_count)
   if quiet && not(files_without_match) {
@@ -1933,6 +1949,151 @@ fn grep_merge_file_matches(
   }
   merged.sort_by((a, b) => String::lexical_compare(a.path, b.path))
   merged
+}
+
+///|
+fn grep_collect_recurse_submodule_matches(
+  fs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  root : String,
+  prefix : String,
+  expr : @bitgrep.GrepExpr,
+  paths : Array[String],
+  pattern_type : @bitgrep.GrepPatternType,
+  ignore_case : Bool,
+  invert_match : Bool,
+  word_regexp : Bool,
+  max_depth : Int,
+  cached : Bool,
+  search_untracked : Bool,
+) -> Array[@bitgrep.GrepFileMatch] raise Error {
+  let entries = @bitlib.read_index_entries(fs, git_dir)
+  let matches : Array[@bitgrep.GrepFileMatch] = []
+  for entry in entries {
+    if entry.mode != 0o160000 {
+      continue
+    }
+    let full_path = if prefix == "" {
+      entry.path
+    } else {
+      prefix + "/" + entry.path
+    }
+    let submodule_paths = grep_submodule_relative_paths(paths, full_path)
+    guard submodule_paths is Some(local_paths) else { continue }
+    let sub_root = root + "/" + entry.path
+    if not(fs.is_dir(sub_root)) {
+      continue
+    }
+    let sub_git_dir = resolve_git_dir(fs, sub_root)
+    let direct_matches = if cached {
+      @bitgrep.search_index_expr(
+        fs,
+        sub_git_dir,
+        expr,
+        local_paths,
+        pattern_type~,
+        ignore_case~,
+        invert_match~,
+        word_regexp~,
+        max_depth~,
+      )
+    } else if search_untracked {
+      grep_merge_file_matches(
+        @bitgrep.search_tracked_worktree_expr(
+          fs,
+          sub_git_dir,
+          sub_root,
+          expr,
+          local_paths,
+          pattern_type~,
+          ignore_case~,
+          invert_match~,
+          word_regexp~,
+          max_depth~,
+        ),
+        @bitgrep.search_untracked_worktree_expr(
+          fs,
+          sub_git_dir,
+          sub_root,
+          expr,
+          local_paths,
+          pattern_type~,
+          ignore_case~,
+          invert_match~,
+          word_regexp~,
+        ),
+      )
+    } else {
+      @bitgrep.search_tracked_worktree_expr(
+        fs,
+        sub_git_dir,
+        sub_root,
+        expr,
+        local_paths,
+        pattern_type~,
+        ignore_case~,
+        invert_match~,
+        word_regexp~,
+        max_depth~,
+      )
+    }
+    let nested_matches = grep_collect_recurse_submodule_matches(
+      fs, sub_git_dir, sub_root, full_path, expr, paths, pattern_type, ignore_case,
+      invert_match, word_regexp, max_depth, cached, search_untracked,
+    )
+    let prefixed_direct_matches = grep_prefix_file_matches(
+      full_path, direct_matches,
+    )
+    let prefixed_matches = grep_merge_file_matches(
+      prefixed_direct_matches, nested_matches,
+    )
+    for item in prefixed_matches {
+      matches.push(item)
+    }
+  }
+  matches.sort_by((a, b) => String::lexical_compare(a.path, b.path))
+  matches
+}
+
+///|
+fn grep_prefix_file_matches(
+  prefix : String,
+  matches : Array[@bitgrep.GrepFileMatch],
+) -> Array[@bitgrep.GrepFileMatch] {
+  let prefixed : Array[@bitgrep.GrepFileMatch] = []
+  for item in matches {
+    let path = if item.path == "" { prefix } else { prefix + "/" + item.path }
+    prefixed.push({ path, matches: item.matches })
+  }
+  prefixed
+}
+
+///|
+fn grep_submodule_relative_paths(
+  paths : Array[String],
+  submodule_path : String,
+) -> Array[String]? {
+  if paths.length() == 0 {
+    return Some([])
+  }
+  let matched : Array[String] = []
+  let submodule_prefix = submodule_path + "/"
+  let mut hits = false
+  for path in paths {
+    if path == submodule_path || path == submodule_prefix {
+      hits = true
+      continue
+    }
+    if path.has_prefix(submodule_prefix) {
+      hits = true
+      matched.push(path[submodule_prefix.length():].to_string())
+    }
+  }
+  if hits {
+    Some(matched)
+  } else {
+    None
+  }
 }
 
 ///|

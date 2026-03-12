@@ -247,7 +247,13 @@ async fn handle_update_index(args : Array[String]) -> Unit raise Error {
       fs, root, git_dir, paths, ignore_missing, allow_unmerged_refresh, ignore_submodules,
       quiet,
     )
-  } else if paths.length() > 0 {
+  } else if paths.length() > 0 &&
+    (
+      add ||
+      remove ||
+      force_remove ||
+      (skip_worktree_mode is None && assume_unchanged_mode is None)
+    ) {
     handle_update_index_paths(
       fs, root, git_dir, paths, add, remove, force_remove, ignore_missing, quiet,
     )
