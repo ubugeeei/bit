@@ -4216,7 +4216,7 @@ fn expand_config_includes(
                 } else {
                   // hasconfig:remote.*.url:PATTERN
                   let url_pattern = match cond.find(".url:") {
-                    Some(colon_idx) => (try! cond[colon_idx + 5:]).to_string()
+                    Some(colon_idx) => string_slice_from(cond, colon_idx + 5)
                     None => ""
                   }
                   if url_pattern.length() > 0 {

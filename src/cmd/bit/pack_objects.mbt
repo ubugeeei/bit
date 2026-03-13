@@ -237,13 +237,13 @@ fn parse_pack_objects_args(args : Array[String]) -> PackObjectsParse {
         }
         _ =>
           if arg.has_prefix("--window=") {
-            let value = (try! arg[9:]).to_string()
+            let value = string_slice_from(arg, 9)
             let parsed = @strconv.parse_int(value) catch {
               _ => return PackObjectsParse::Unsupported
             }
             window = parsed
           } else if arg.has_prefix("--index-version=") {
-            let iv_str = (try! arg[16:]).to_string()
+            let iv_str = string_slice_from(arg, 16)
             match parse_index_version_value(iv_str) {
               Some((iv, threshold)) => {
                 index_version = iv
@@ -281,12 +281,12 @@ fn parse_pack_objects_args(args : Array[String]) -> PackObjectsParse {
             )
             i += 1
           } else if arg.has_prefix("--object-format=") {
-            object_format = normalize_object_format((try! arg[16:]).to_string())
+            object_format = normalize_object_format(string_slice_from(arg, 16))
             if object_format is None {
               return PackObjectsParse::Unsupported
             }
           } else if arg.has_prefix("--name-hash-version=") {
-            let value = (try! arg[20:]).to_string()
+            let value = string_slice_from(arg, 20)
             let parsed = @strconv.parse_int(value) catch {
               _ => return PackObjectsParse::Unsupported
             }
@@ -298,29 +298,29 @@ fn parse_pack_objects_args(args : Array[String]) -> PackObjectsParse {
             }
             name_hash_version = Some(normalized)
           } else if arg.has_prefix("--missing=") {
-            let value = (try! arg[10:]).to_string()
+            let value = string_slice_from(arg, 10)
             match value {
               "allow-any" => missing_mode = MissingMode::AllowAny
               "error" => missing_mode = MissingMode::Error
               _ => return PackObjectsParse::Unsupported
             }
           } else if arg.has_prefix("--depth=") {
-            let value = (try! arg[8:]).to_string()
+            let value = string_slice_from(arg, 8)
             let parsed = @strconv.parse_int(value) catch {
               _ => return PackObjectsParse::Unsupported
             }
             depth = parsed
           } else if arg.has_prefix("--cruft-expiration=") {
-            let value = (try! arg[19:]).to_string()
+            let value = string_slice_from(arg, 19)
             cruft_expiration = Some(value)
           } else if arg.has_prefix("--max-cruft-size=") {
-            let value = (try! arg[17:]).to_string()
+            let value = string_slice_from(arg, 17)
             max_cruft_size = Some(parse_size_with_suffix(value))
           } else if arg.has_prefix("--max-pack-size=") {
-            let value = (try! arg[16:]).to_string()
+            let value = string_slice_from(arg, 16)
             max_pack_size = Some(parse_size_with_suffix(value))
           } else if arg.has_prefix("--unpack-unreachable=") {
-            let value = (try! arg[21:]).to_string()
+            let value = string_slice_from(arg, 21)
             unpack_unreachable = true
             unpack_unreachable_expiration = parse_approxidate(value)
           } else if arg.has_prefix("--keep-pack=") {
@@ -428,7 +428,7 @@ fn parse_pack_objects_args(args : Array[String]) -> PackObjectsParse {
 fn parse_index_version_value(s : String) -> (Int, Int64?)? {
   if s.contains(",") {
     let comma_pos = s.find(",").unwrap()
-    let num_str = (try! s[:comma_pos]).to_string()
+    let num_str = string_slice_to(s, comma_pos)
     let offset_str = String::unsafe_substring(
       s,
       start=comma_pos + 1,
@@ -786,7 +786,7 @@ fn parse_tag_target_id(data : Bytes) -> @bitcore.ObjectId? {
     }
     let text = line_to_string(trimmed)
     if text.has_prefix("object ") {
-      let hex = (try! text[7:]).to_string()
+      let hex = string_slice_from(text, 7)
       let id = @bitcore.ObjectId::from_hex(hex) catch { _ => return None }
       return Some(id)
     }
@@ -889,7 +889,7 @@ fn parse_stdin_pack_lines(input : Bytes) -> (Array[String], Array[String]) {
     }
     let text = line_to_string(trimmed)
     if text.has_prefix("^") {
-      exclude_names.push((try! text[1:]).to_string())
+      exclude_names.push(string_slice_from(text, 1))
     } else {
       include_names.push(text)
     }
@@ -950,7 +950,7 @@ fn normalize_dir_entry(entry : String) -> String {
       if pos + 1 >= entry.length() {
         ""
       } else {
-        (try! entry[pos + 1:]).to_string()
+        string_slice_from(entry, pos + 1)
       }
   }
 }
@@ -1004,7 +1004,7 @@ fn collect_pack_ids_from_marker(
     if not(name.has_suffix(suffix)) {
       continue
     }
-    let base = (try! name[:name.length() - suffix.length()]).to_string()
+    let base = string_slice_to(name, name.length() - suffix.length())
     let idx_path = pack_dir + "/" + base + ".idx"
     if not(fs.is_file(idx_path)) {
       continue
@@ -1131,7 +1131,7 @@ fn resolve_pack_path(
 ) -> String? {
   let mut pack_name = name
   if pack_name.has_suffix(".idx") {
-    pack_name = (try! pack_name[:pack_name.length() - 4]).to_string() + ".pack"
+    pack_name = string_slice_to(pack_name, pack_name.length() - 4) + ".pack"
   }
   if pack_name.has_prefix("/") || pack_name.contains("/") {
     let path = resolve_in_cwd(pack_name)
@@ -1529,7 +1529,7 @@ fn find_pack_with_bitmap(fs : OsFs, pack_dir : String) -> String? {
     let name = normalize_dir_entry(entry)
     if name.has_suffix(".bitmap") && !name.has_prefix("multi-pack-index") {
       // e.g. "pack-abc123.bitmap" → "pack-abc123"
-      let stem = (try! name[:name.length() - 7]).to_string()
+      let stem = string_slice_to(name, name.length() - 7)
       bitmap_stems[stem] = true
     }
   }
@@ -1537,7 +1537,7 @@ fn find_pack_with_bitmap(fs : OsFs, pack_dir : String) -> String? {
   for entry in entries {
     let name = normalize_dir_entry(entry)
     if name.has_suffix(".pack") && !name.has_prefix(".") {
-      let stem = (try! name[:name.length() - 5]).to_string()
+      let stem = string_slice_to(name, name.length() - 5)
       if bitmap_stems.contains(stem) {
         return Some(name)
       }
@@ -1594,7 +1594,7 @@ fn has_midx_bitmap(fs : OsFs, pack_dir : String) -> Bool {
 ///|
 fn pack_idx_path(pack_path : String) -> String {
   if pack_path.has_suffix(".pack") {
-    let base = (try! pack_path[:pack_path.length() - 5]).to_string()
+    let base = string_slice_to(pack_path, pack_path.length() - 5)
     base + ".idx"
   } else {
     pack_path + ".idx"
@@ -1623,7 +1623,7 @@ fn corrupt_pack_file(fs : OsFs, pack_path : String) -> Unit {
 ///|
 fn is_promisor_pack(fs : OsFs, pack_path : String) -> Bool {
   let base = if pack_path.has_suffix(".pack") {
-    (try! pack_path[:pack_path.length() - 5]).to_string()
+    string_slice_to(pack_path, pack_path.length() - 5)
   } else {
     pack_path
   }
@@ -2629,7 +2629,7 @@ async fn handle_pack_objects(args : Array[String]) -> Unit raise Error {
             continue
           }
           let (negated, spec) = if text.has_prefix("^") {
-            (true, (try! text[1:]).to_string())
+            (true, string_slice_from(text, 1))
           } else {
             (negate_mode, text)
           }
@@ -2637,8 +2637,8 @@ async fn handle_pack_objects(args : Array[String]) -> Unit raise Error {
           if !negated {
             match spec.find("..") {
               Some(pos) => {
-                let left = (try! spec[:pos]).to_string()
-                let right = (try! spec[pos + 2:]).to_string()
+                let left = string_slice_to(spec, pos)
+                let right = string_slice_from(spec, pos + 2)
                 if right.length() > 0 {
                   match @bitrepo.rev_parse(fs, git_dir, right) {
                     None => {
@@ -3164,7 +3164,7 @@ async fn loosen_unused_packed_objects(
   for entry in entries {
     let name = normalize_dir_entry(entry)
     if name.has_suffix(".keep") {
-      let base = (try! name[:name.length() - 5]).to_string()
+      let base = string_slice_to(name, name.length() - 5)
       keep_bases[base] = true
     }
   }
@@ -3174,7 +3174,7 @@ async fn loosen_unused_packed_objects(
       continue
     }
     // Check if this pack has a .keep file
-    let base = (try! name[:name.length() - 4]).to_string()
+    let base = string_slice_to(name, name.length() - 4)
     if keep_bases.contains(base + ".keep") {
       continue
     }

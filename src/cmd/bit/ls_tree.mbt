@@ -322,7 +322,7 @@ async fn print_tree_entries(
           let abbrev_hex = match abbrev {
             Some(n) => {
               let len = if n < obj_hex.length() { n } else { obj_hex.length() }
-              (try! obj_hex[:len]).to_string()
+              string_slice_to(obj_hex, len)
             }
             None => obj_hex
           }
@@ -352,7 +352,7 @@ async fn print_tree_entries(
                 } else {
                   obj_hex.length()
                 }
-                print_line((try! obj_hex[:len]).to_string())
+                print_line(string_slice_to(obj_hex, len))
               }
               None => print_line(obj_hex)
             }

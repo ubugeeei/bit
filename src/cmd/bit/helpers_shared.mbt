@@ -22,13 +22,19 @@ fn parent_dir(path : String) -> String {
   let sep = @path.sep.to_string()
   match path.rev_find(sep) {
     None => ""
-    Some(idx) =>
-      if idx == 0 {
-        sep
-      } else {
-        String::unsafe_substring(path, start=0, end=idx)
-      }
+    Some(idx) => if idx == 0 { sep } else { string_slice_to(path, idx) }
   }
+}
+
+///|
+fn string_slice_from(text : String, start : Int) -> String {
+  String::unsafe_substring(text, start~, end=text.length())
+}
+
+///|
+fn string_slice_to(text : String, end : Int) -> String {
+  let base = string_slice_from(text, 0)
+  String::unsafe_substring(base, start=0, end~)
 }
 
 ///|
@@ -242,10 +248,10 @@ fn normalize_repo_root(path : String) -> String {
     return "."
   }
   if path.has_suffix("/.git") && path.length() > 5 {
-    return String::unsafe_substring(path, start=0, end=path.length() - 5)
+    return string_slice_to(path, path.length() - 5)
   }
   if path.has_suffix("/.bit") && path.length() > 5 {
-    return String::unsafe_substring(path, start=0, end=path.length() - 5)
+    return string_slice_to(path, path.length() - 5)
   }
   path
 }

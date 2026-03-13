@@ -71,7 +71,7 @@ test "tag: annotation output indents continuation lines" {
 ///|
 test "tag: editor template starts with blank line when message is absent" {
   let template = tag_edit_buffer_template(None)
-  assert_eq((try! template[:1]).to_string(), "\n")
+  assert_eq(string_slice_to(template, 1), "\n")
 }
 
 ///|

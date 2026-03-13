@@ -255,7 +255,7 @@ async fn handle_ls_files(args : Array[String]) -> Unit raise Error {
       while true {
         match path.rev_find("/") {
           Some(idx) => {
-            let dir = (try! path[:idx]).to_string()
+            let dir = string_slice_to(path, idx)
             tracked_dirs[dir] = true
             path = dir
           }

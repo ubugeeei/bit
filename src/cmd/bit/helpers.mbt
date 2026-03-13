@@ -889,7 +889,7 @@ fn make_relative_to_cwd(path : String) -> String {
   }
   let prefix = if cwd.has_suffix("/") { cwd } else { cwd + "/" }
   if path.has_prefix(prefix) {
-    let rel = (try! path[prefix.length():]).to_string()
+    let rel = string_slice_from(path, prefix.length())
     if rel.length() == 0 {
       "."
     } else {

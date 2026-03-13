@@ -77,15 +77,15 @@ async fn handle_init(args : Array[String]) -> Unit raise Error {
         i += 1
       }
       _ if arg.has_prefix("--initial-branch=") =>
-        initial_branch = Some((try! arg[17:]).to_string())
+        initial_branch = Some(string_slice_from(arg, 17))
       _ if arg.has_prefix("--separate-git-dir=") =>
-        separate_git_dir = Some((try! arg[19:]).to_string())
+        separate_git_dir = Some(string_slice_from(arg, 19))
       _ if arg.has_prefix("--template=") =>
-        template_dir = Some((try! arg[11:]).to_string())
+        template_dir = Some(string_slice_from(arg, 11))
       _ if arg.has_prefix("--shared=") =>
-        shared_mode = Some((try! arg[9:]).to_string())
+        shared_mode = Some(string_slice_from(arg, 9))
       _ if arg.has_prefix("--ref-format=") => {
-        let value = (try! arg[13:]).to_string().to_lower()
+        let value = string_slice_from(arg, 13).to_lower()
         if value != "files" && value != "reftable" {
           eprint_line("fatal: unknown ref storage format '\{value}'")
           @sys.exit(128)
@@ -94,7 +94,7 @@ async fn handle_init(args : Array[String]) -> Unit raise Error {
         ref_format_explicit = true
       }
       _ if arg.has_prefix("--object-format=") => {
-        let value = (try! arg[16:]).to_string().to_lower()
+        let value = string_slice_from(arg, 16).to_lower()
         if value != "sha1" && value != "sha256" {
           eprint_line("fatal: unknown hash algorithm '\{value}'")
           @sys.exit(128)

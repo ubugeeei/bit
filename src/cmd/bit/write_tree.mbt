@@ -55,7 +55,7 @@ async fn handle_write_tree(args : Array[String]) -> Unit raise Error {
   let mut missing_ok = false
   for arg in args {
     if arg.has_prefix("--prefix=") {
-      prefix = Some((try! arg[9:]).to_string())
+      prefix = Some(string_slice_from(arg, 9))
     } else if arg == "--missing-ok" {
       missing_ok = true
     } else if arg.has_prefix("-") {

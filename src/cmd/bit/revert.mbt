@@ -122,7 +122,7 @@ async fn handle_revert(args : Array[String]) -> Unit raise Error {
     let author = get_author_string()
     let timestamp = get_commit_timestamp()
     let new_commit_id = @bitlib.commit(wfs, rfs, root, msg, author, timestamp)
-    let short_id = (try! new_commit_id.to_hex()[:7]).to_string()
+    let short_id = string_slice_to(new_commit_id.to_hex(), 7)
     let first_line = match msg.find("\n") {
       Some(idx) => String::unsafe_substring(msg, start=0, end=idx)
       None => msg
@@ -299,7 +299,7 @@ async fn handle_revert(args : Array[String]) -> Unit raise Error {
         timestamp,
         allow_empty=true,
       )
-      let short_id = (try! new_commit_id.to_hex()[:7]).to_string()
+      let short_id = string_slice_to(new_commit_id.to_hex(), 7)
       print_line("[\{short_id}] Revert \"\{first_line}\"")
     }
   }

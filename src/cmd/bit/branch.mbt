@@ -405,7 +405,7 @@ async fn branch_list_with_merge_filter(
           }
         @bitlib.HeadRef::Detached(_) => "  "
       }
-      let short_hash = (try! b.id.to_hex()[:7]).to_string()
+      let short_hash = string_slice_to(b.id.to_hex(), 7)
       let subject = branch_get_commit_subject(db, fs, b.id)
       let padded_name = branch_pad_right(b.name, max_len)
       print_line("\{marker}\{padded_name} \{short_hash} \{subject}")

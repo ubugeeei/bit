@@ -557,7 +557,7 @@ async fn handle_worktree_list(args : Array[String]) -> Unit raise Error {
         continue
       }
       let commit_str = match wt.head_id {
-        Some(id) => (try! id.to_hex()[:7]).to_string()
+        Some(id) => string_slice_to(id.to_hex(), 7)
         None => "0000000"
       }
       let lock_reason = if wt.locked {
@@ -597,7 +597,7 @@ async fn handle_worktree_list(args : Array[String]) -> Unit raise Error {
         continue
       }
       let commit_str = match wt.head_id {
-        Some(id) => (try! id.to_hex()[:7]).to_string()
+        Some(id) => string_slice_to(id.to_hex(), 7)
         None => "0000000"
       }
       let mut suffix = ""
@@ -746,7 +746,7 @@ async fn handle_worktree_add(args : Array[String]) -> Unit raise Error {
         } else if commit_ish is None {
           commit_ish = Some(arg)
         }
-      _ if arg.has_prefix("-b") => new_branch = Some((try! arg[2:]).to_string())
+      _ if arg.has_prefix("-b") => new_branch = Some(string_slice_from(arg, 2))
       _ if arg.has_prefix("-") => warn_unimplemented_arg("worktree", arg)
       _ =>
         if path is None {
@@ -1034,7 +1034,7 @@ async fn handle_worktree_lock(args : Array[String]) -> Unit raise Error {
         continue
       }
       _ if arg.has_prefix("--reason=") =>
-        reason = Some((try! arg[9:]).to_string())
+        reason = Some(string_slice_from(arg, 9))
       _ if not(arg.has_prefix("-")) => path = Some(arg)
       _ if arg.has_prefix("-") => warn_unimplemented_arg("worktree", arg)
       _ => ()

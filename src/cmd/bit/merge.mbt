@@ -110,12 +110,12 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
           "option '--message' requires a value",
         )
       _ if arg.has_prefix("-m") => {
-        message = Some((try! arg[2:]).to_string())
+        message = Some(string_slice_from(arg, 2))
         i += 1
         continue
       }
       _ if arg.has_prefix("--message=") => {
-        message = Some((try! arg[10:]).to_string())
+        message = Some(string_slice_from(arg, 10))
         i += 1
         continue
       }

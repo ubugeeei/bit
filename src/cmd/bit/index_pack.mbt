@@ -113,9 +113,9 @@ fn parse_index_pack_args(args : Array[String]) -> IndexPackParse {
         }
         _ =>
           if arg.has_prefix("--keep=") {
-            keep_msg = Some((try! arg[7:]).to_string())
+            keep_msg = Some(string_slice_from(arg, 7))
           } else if arg.has_prefix("--object-format=") {
-            object_format = normalize_object_format((try! arg[16:]).to_string())
+            object_format = normalize_object_format(string_slice_from(arg, 16))
             if object_format is None {
               return IndexPackParse::Unsupported
             }
@@ -132,7 +132,7 @@ fn parse_index_pack_args(args : Array[String]) -> IndexPackParse {
           } else if arg.has_prefix("--verify-stat-only") {
             return IndexPackParse::Unsupported
           } else if arg.has_prefix("--index-version=") {
-            let iv_str = (try! arg[16:]).to_string()
+            let iv_str = string_slice_from(arg, 16)
             match parse_index_version_value(iv_str) {
               Some((iv, threshold)) => {
                 index_version = iv
@@ -141,7 +141,7 @@ fn parse_index_pack_args(args : Array[String]) -> IndexPackParse {
               None => ()
             }
           } else if arg.has_prefix("--max-input-size=") {
-            let value = (try! arg[17:]).to_string()
+            let value = string_slice_from(arg, 17)
             max_input_size = Some(parse_size_with_suffix(value))
           } else if arg.has_prefix("--threads") {
             // no threading support, accept and ignore (like git !HAVE_THREADS)
@@ -795,7 +795,7 @@ async fn handle_index_pack(args : Array[String]) -> Unit raise Error {
           }
         }
         let idx_path = if pack_path.has_suffix(".pack") {
-          let base = (try! pack_path[:pack_path.length() - 5]).to_string()
+          let base = string_slice_to(pack_path, pack_path.length() - 5)
           base + ".idx"
         } else {
           pack_path + ".idx"
@@ -817,7 +817,7 @@ async fn handle_index_pack(args : Array[String]) -> Unit raise Error {
             // Verify .rev file if --rev-index was given
             if write_rev {
               let rev_path = if pack_path.has_suffix(".pack") {
-                let base = (try! pack_path[:pack_path.length() - 5]).to_string()
+                let base = string_slice_to(pack_path, pack_path.length() - 5)
                 base + ".rev"
               } else {
                 pack_path + ".rev"
@@ -970,17 +970,17 @@ async fn handle_index_pack(args : Array[String]) -> Unit raise Error {
           Some(given_path) => {
             let resolved = resolve_in_cwd(given_path)
             let idx = if resolved.has_suffix(".pack") {
-              (try! resolved[:resolved.length() - 5]).to_string() + ".idx"
+              string_slice_to(resolved, resolved.length() - 5) + ".idx"
             } else {
               resolved + ".idx"
             }
             let rev = if resolved.has_suffix(".pack") {
-              (try! resolved[:resolved.length() - 5]).to_string() + ".rev"
+              string_slice_to(resolved, resolved.length() - 5) + ".rev"
             } else {
               resolved + ".rev"
             }
             let keep = if resolved.has_suffix(".pack") {
-              (try! resolved[:resolved.length() - 5]).to_string() + ".keep"
+              string_slice_to(resolved, resolved.length() - 5) + ".keep"
             } else {
               resolved + ".keep"
             }
@@ -1059,7 +1059,7 @@ async fn handle_index_pack(args : Array[String]) -> Unit raise Error {
         Some(path) => resolve_in_cwd(path)
         None =>
           if pack_path.has_suffix(".pack") {
-            let base = (try! pack_path[:pack_path.length() - 5]).to_string()
+            let base = string_slice_to(pack_path, pack_path.length() - 5)
             base + ".idx"
           } else {
             pack_path + ".idx"
@@ -1101,7 +1101,7 @@ async fn handle_index_pack(args : Array[String]) -> Unit raise Error {
       if write_rev {
         // Derive .rev path from idx output path (handles -o flag)
         let rev_path = if idx_path.has_suffix(".idx") {
-          let base = (try! idx_path[:idx_path.length() - 4]).to_string()
+          let base = string_slice_to(idx_path, idx_path.length() - 4)
           base + ".rev"
         } else {
           idx_path + ".rev"
@@ -1110,7 +1110,7 @@ async fn handle_index_pack(args : Array[String]) -> Unit raise Error {
       }
       if cfg.keep_msg is Some(_) {
         let keep_path = if pack_path.has_suffix(".pack") {
-          let base = (try! pack_path[:pack_path.length() - 5]).to_string()
+          let base = string_slice_to(pack_path, pack_path.length() - 5)
           base + ".keep"
         } else {
           pack_path + ".keep"

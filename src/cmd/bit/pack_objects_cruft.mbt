@@ -16,7 +16,7 @@ fn parse_cruft_stdin_lines(input : Bytes) -> (Array[String], Array[String]) {
     }
     let text = line_to_string(trimmed)
     if text.has_prefix("-") {
-      discard_names.push((try! text[1:]).to_string())
+      discard_names.push(string_slice_from(text, 1))
     } else {
       keep_names.push(text)
     }
@@ -52,7 +52,7 @@ fn parse_approxidate(s : String) -> Int64 {
           start=0,
           end=dot_pos,
         )
-        let unit = (try! without_ago[dot_pos + 1:]).to_string()
+        let unit = string_slice_from(without_ago, dot_pos + 1)
         let n = @strconv.parse_int64(num_str) catch { _ => return now }
         let multiplier : Int64 = match unit {
           "second" | "seconds" => 1L

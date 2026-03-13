@@ -2428,7 +2428,7 @@ async fn for_each_ref_atom(
       for_each_ref_rstrip_n(refname, n)
     }
     "objectname" | "objectname:long" => id.to_hex()
-    "objectname:short" => (try! id.to_hex()[:7]).to_string()
+    "objectname:short" => string_slice_to(id.to_hex(), 7)
     _ if atom.has_prefix("objectname:short=") => {
       let n_str = String::unsafe_substring(atom, start=17, end=atom.length())
       let n = @strconv.parse_int(n_str) catch { _ => 7 }
@@ -2436,7 +2436,7 @@ async fn for_each_ref_atom(
       // git enforces minimum of 4 chars for short hashes
       let min_n = if n < 4 { 4 } else { n }
       let len = if min_n > hex.length() { hex.length() } else { min_n }
-      (try! hex[:len]).to_string()
+      string_slice_to(hex, len)
     }
     "objecttype" => obj_type
     "objectsize" => obj_size.to_string()
@@ -2502,7 +2502,7 @@ async fn for_each_ref_atom(
               end=line.length(),
             )
             if atom == "tree:short" {
-              return (try! hash[:7]).to_string()
+              return string_slice_to(hash, 7)
             }
             return hash
           }
@@ -2526,7 +2526,7 @@ async fn for_each_ref_atom(
             )
             let min_n = if n < 4 { 4 } else { n }
             let len = if min_n > hash.length() { hash.length() } else { min_n }
-            return (try! hash[:len]).to_string()
+            return string_slice_to(hash, len)
           }
         }
         ""
@@ -2575,7 +2575,7 @@ async fn for_each_ref_atom(
     "*objectname:short" =>
       if is_tag {
         let hex = deref_id.to_hex()
-        (try! hex[:7]).to_string()
+        string_slice_to(hex, 7)
       } else {
         ""
       }

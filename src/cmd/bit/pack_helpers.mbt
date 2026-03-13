@@ -150,12 +150,12 @@ fn parse_git_config_value(
       // Section header: [section] or [section "subsection"]
       match line.find("]") {
         Some(idx) => {
-          let section_part = (try! line[1:idx]).to_string()
+          let section_part = String::unsafe_substring(line, start=1, end=idx)
           // Handle subsection: [remote "origin"] -> remote.origin
           match section_part.find(" ") {
             Some(si) => {
-              let main_sec = (try! section_part[:si]).to_string()
-              let sub_sec = (try! section_part[si + 1:])
+              let main_sec = string_slice_to(section_part, si)
+              let sub_sec = string_slice_from(section_part, si + 1)
                 .to_string()
                 .trim()
                 .to_string()
@@ -172,8 +172,8 @@ fn parse_git_config_value(
     // Key = value
     match line.find("=") {
       Some(idx) => {
-        let k = (try! line[:idx]).to_string().trim().to_string()
-        let v = (try! line[idx + 1:]).to_string().trim().to_string()
+        let k = string_slice_to(line, idx).trim().to_string()
+        let v = string_slice_from(line, idx + 1).trim().to_string()
         if current_section == target_section_lower &&
           k.to_lower() == target_key_lower {
           return Some(v)
@@ -198,7 +198,7 @@ fn parse_size_value(value : String) -> Int64? {
     last_char <= '9' {
     (trimmed, 1L)
   } else {
-    let num_part = (try! trimmed[:len - 1]).to_string()
+    let num_part = string_slice_to(trimmed, len - 1)
     let mult : Int64 = match last_char {
       'k' => 1024L
       'm' => 1024L * 1024L

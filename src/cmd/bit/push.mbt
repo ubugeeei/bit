@@ -318,7 +318,7 @@ fn push_write_upstream_config_updates(
       fs, fs, git_dir, "branch", branch_name, "merge", merge_ref,
     )
     let remote_branch_name = if merge_ref.has_prefix("refs/heads/") {
-      (try! merge_ref[11:]).to_string()
+      string_slice_from(merge_ref, 11)
     } else {
       merge_ref
     }

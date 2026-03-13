@@ -127,13 +127,13 @@ async fn handle_tag(args : Array[String]) -> Unit raise Error {
         continue
       }
       _ if arg.has_prefix("-m") => {
-        message = Some((try! arg[2:]).to_string())
+        message = Some(string_slice_from(arg, 2))
         annotated = true
         i += 1
         continue
       }
       _ if arg.has_prefix("--message=") => {
-        message = Some((try! arg[10:]).to_string())
+        message = Some(string_slice_from(arg, 10))
         annotated = true
         i += 1
         continue
@@ -362,7 +362,7 @@ async fn handle_tag(args : Array[String]) -> Unit raise Error {
       match id {
         Some(oid) =>
           eprint_line(
-            "Deleted tag '\{name}' (was \{(try! oid.to_hex()[:7]).to_string()})",
+            "Deleted tag '\{name}' (was \{string_slice_to(oid.to_hex(), 7)})",
           )
         None => eprint_line("Deleted tag '\{name}'")
       }

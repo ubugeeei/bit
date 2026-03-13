@@ -3566,11 +3566,11 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         )
       }
       _ if arg.has_prefix("--decorate-refs=") =>
-        decoration_include_patterns.push((try! arg[16:]).to_string())
+        decoration_include_patterns.push(string_slice_from(arg, 16))
       _ if arg.has_prefix("--decorate-refs-exclude=") =>
-        decoration_exclude_patterns.push((try! arg[24:]).to_string())
+        decoration_exclude_patterns.push(string_slice_from(arg, 24))
       _ if arg.has_prefix("-n") && arg.length() > 2 => {
-        let num_str = (try! arg[2:]).to_string()
+        let num_str = string_slice_from(arg, 2)
         max_count = @strconv.parse_int(num_str)
       }
       _ if is_short_count_flag(arg) => {
@@ -3578,25 +3578,25 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         max_count = @strconv.parse_int(num_str)
       }
       _ if arg.has_prefix("--max-count=") => {
-        let num_str = (try! arg[12:]).to_string()
+        let num_str = string_slice_from(arg, 12)
         max_count = @strconv.parse_int(num_str)
       }
       _ if arg.has_prefix("--diff-filter=") => {
-        let value = (try! arg[14:]).to_string()
+        let value = string_slice_from(arg, 14)
         log_add_diff_filter_chars(
           value, diff_filter_include, diff_filter_exclude,
         )
       }
       _ if arg.has_prefix("--grep=") =>
-        grep_patterns.push((try! arg[7:]).to_string())
+        grep_patterns.push(string_slice_from(arg, 7))
       _ if arg.has_prefix("--grep-reflog=") =>
-        grep_reflog_patterns.push((try! arg[14:]).to_string())
+        grep_reflog_patterns.push(string_slice_from(arg, 14))
       _ if arg.has_prefix("--author=") =>
-        author_patterns.push((try! arg[9:]).to_string())
+        author_patterns.push(string_slice_from(arg, 9))
       _ if arg.has_prefix("--committer=") =>
-        committer_patterns.push((try! arg[12:]).to_string())
+        committer_patterns.push(string_slice_from(arg, 12))
       _ if arg.has_prefix("--branches=") => {
-        branch_patterns.push((try! arg[11:]).to_string())
+        branch_patterns.push(string_slice_from(arg, 11))
         saw_revision_input = true
       }
       _ if arg.has_prefix("--glob=") => {
@@ -3609,22 +3609,22 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         saw_revision_input = true
       }
       _ if arg.has_prefix("--abbrev=") => {
-        let parsed = @strconv.parse_int((try! arg[9:]).to_string()) catch {
+        let parsed = @strconv.parse_int(string_slice_from(arg, 9)) catch {
           _ => 7
         }
         abbrev_len_override = Some(log_normalize_abbrev_length(parsed))
       }
       _ if arg.has_prefix("--no-walk=") => {
         no_walk = true
-        let mode = (try! arg[10:]).to_string()
+        let mode = string_slice_from(arg, 10)
         no_walk_unsorted = mode == "unsorted"
       }
       _ if arg.has_prefix("--since=") => {
-        let val = (try! arg[8:]).to_string()
+        let val = string_slice_from(arg, 8)
         since_ts = @strconv.parse_int64(val) catch { _ => 0L }
       }
       _ if arg.has_prefix("--until=") => {
-        let val = (try! arg[8:]).to_string()
+        let val = string_slice_from(arg, 8)
         until_ts = @strconv.parse_int64(val) catch { _ => 9223372036854775807L }
       }
       "--line-prefix" if i + 1 < args.length() => {
@@ -3632,14 +3632,14 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         i += 1
       }
       _ if arg.has_prefix("--line-prefix=") =>
-        line_prefix = (try! arg[14:]).to_string()
+        line_prefix = string_slice_from(arg, 14)
       "--reverse" => reverse = true
       "--first-parent" => first_parent = true
       "--date" if i + 1 < args.length() => {
         date_format = args[i + 1]
         i += 1
       }
-      _ if arg.has_prefix("--date=") => date_format = (try! arg[7:]).to_string()
+      _ if arg.has_prefix("--date=") => date_format = string_slice_from(arg, 7)
       _ if arg.has_prefix("-") => warn_unimplemented_arg("log", arg)
       _ => {
         saw_revision_input = true
@@ -3781,9 +3781,9 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     )
     let normalized_reflog_format = match format {
       Some(raw_fmt) if raw_fmt.has_prefix("tformat:") =>
-        Some((try! raw_fmt[8:]).to_string())
+        Some(string_slice_from(raw_fmt, 8))
       Some(raw_fmt) if raw_fmt.has_prefix("format:") =>
-        Some((try! raw_fmt[7:]).to_string())
+        Some(string_slice_from(raw_fmt, 7))
       Some(raw_fmt) => Some(raw_fmt)
       None => None
     }
@@ -3964,9 +3964,9 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
   if format is Some(raw_fmt) {
     // Strip tformat:/format: prefix
     let (actual_fmt, is_tformat) = if raw_fmt.has_prefix("tformat:") {
-      ((try! raw_fmt[8:]).to_string(), true)
+      (string_slice_from(raw_fmt, 8), true)
     } else if raw_fmt.has_prefix("format:") {
-      ((try! raw_fmt[7:]).to_string(), false)
+      (string_slice_from(raw_fmt, 7), false)
     } else if raw_fmt == "oneline" {
       ("%h %s", true)
     } else {

@@ -17,7 +17,7 @@ async fn handle_notes(args : Array[String]) -> Unit raise Error {
         continue
       }
       _ if arg.has_prefix("--ref=") => {
-        ref_name = Some((try! arg[6:]).to_string())
+        ref_name = Some(string_slice_from(arg, 6))
         i += 1
         continue
       }
@@ -56,12 +56,12 @@ async fn handle_notes(args : Array[String]) -> Unit raise Error {
             continue
           }
           _ if arg.has_prefix("-m") => {
-            message = Some((try! arg[2:]).to_string())
+            message = Some(string_slice_from(arg, 2))
             i += 1
             continue
           }
           _ if arg.has_prefix("--message=") => {
-            message = Some((try! arg[10:]).to_string())
+            message = Some(string_slice_from(arg, 10))
             i += 1
             continue
           }
@@ -97,12 +97,12 @@ async fn handle_notes(args : Array[String]) -> Unit raise Error {
             continue
           }
           _ if arg.has_prefix("-m") => {
-            message = Some((try! arg[2:]).to_string())
+            message = Some(string_slice_from(arg, 2))
             i += 1
             continue
           }
           _ if arg.has_prefix("--message=") => {
-            message = Some((try! arg[10:]).to_string())
+            message = Some(string_slice_from(arg, 10))
             i += 1
             continue
           }
@@ -133,12 +133,12 @@ async fn handle_notes(args : Array[String]) -> Unit raise Error {
             continue
           }
           _ if arg.has_prefix("-m") => {
-            message = Some((try! arg[2:]).to_string())
+            message = Some(string_slice_from(arg, 2))
             i += 1
             continue
           }
           _ if arg.has_prefix("--message=") => {
-            message = Some((try! arg[10:]).to_string())
+            message = Some(string_slice_from(arg, 10))
             i += 1
             continue
           }
@@ -211,7 +211,7 @@ async fn handle_notes(args : Array[String]) -> Unit raise Error {
             continue
           }
           _ if arg.has_prefix("--strategy=") => {
-            strategy = Some((try! arg[11:]).to_string())
+            strategy = Some(string_slice_from(arg, 11))
             i += 1
             continue
           }

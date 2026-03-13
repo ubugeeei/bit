@@ -242,7 +242,7 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
       _ if arg.has_prefix("-m") && not(arg.has_prefix("-ma")) => {
         commit_check_message_source_conflict(message_source, "m")
         message_source = "m"
-        messages.push((try! arg[2:]).to_string())
+        messages.push(string_slice_from(arg, 2))
         i += 1
         continue
       }
@@ -250,31 +250,31 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
         commit_check_message_source_conflict(message_source, "m")
         message_source = "m"
         all_modified = true
-        messages.push((try! arg[3:]).to_string())
+        messages.push(string_slice_from(arg, 3))
         i += 1
         continue
       }
       _ if arg.has_prefix("--message=") => {
         commit_check_message_source_conflict(message_source, "m")
         message_source = "m"
-        messages.push((try! arg[10:]).to_string())
+        messages.push(string_slice_from(arg, 10))
         i += 1
         continue
       }
       _ if arg.has_prefix("--author=") => {
-        author_override = Some((try! arg[9:]).to_string())
+        author_override = Some(string_slice_from(arg, 9))
         i += 1
         continue
       }
       _ if arg.has_prefix("--date=") => {
-        date_override = Some((try! arg[7:]).to_string())
+        date_override = Some(string_slice_from(arg, 7))
         i += 1
         continue
       }
       _ if arg.has_prefix("-F") => {
         commit_check_message_source_conflict(message_source, "F")
         message_source = "F"
-        let file = (try! arg[2:]).to_string()
+        let file = string_slice_from(arg, 2)
         messages.push(
           read_commit_message_from_file(fs, root, file, commit_message_encoding),
         )
@@ -284,7 +284,7 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
       _ if arg.has_prefix("-C") => {
         commit_check_message_source_conflict(message_source, "C")
         message_source = "C"
-        let spec = (try! arg[2:]).to_string()
+        let spec = string_slice_from(arg, 2)
         let rev_msg = read_commit_message_from_revision(fs, root, spec)
         match rev_msg {
           Some(m) => messages.push(m)
@@ -299,7 +299,7 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
       _ if arg.has_prefix("-c") && arg.length() > 2 => {
         commit_check_message_source_conflict(message_source, "c")
         message_source = "c"
-        let spec = (try! arg[2:]).to_string()
+        let spec = string_slice_from(arg, 2)
         let rev_msg = read_commit_message_from_revision(fs, root, spec)
         match rev_msg {
           Some(m) => messages.push(m)
@@ -346,7 +346,7 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
         continue
       }
       _ if arg.has_prefix("--cleanup=") => {
-        let value = (try! arg[10:]).to_string()
+        let value = string_slice_from(arg, 10)
         match commit_normalize_cleanup_mode(value) {
           Some(mode) => cleanup_mode = mode
           None => {
@@ -530,9 +530,9 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
     cleanup_merge_state_files(fs, git_dir)
   }
   // Build output like git: [branch (root-commit) short_id] first_line
-  let short_id = (try! commit_id.to_hex()[:7]).to_string()
+  let short_id = string_slice_to(commit_id.to_hex(), 7)
   let first_line = match msg.find("\n") {
-    Some(idx) => (try! msg[:idx]).to_string()
+    Some(idx) => string_slice_to(msg, idx)
     None => msg
   }
   if not(quiet) {
@@ -960,7 +960,7 @@ fn commit_get_current_branch(
   }
   let trimmed = trim_string(content)
   if trimmed.has_prefix("ref: refs/heads/") {
-    Some(trimmed[16:].to_string() catch { _ => return None })
+    Some(string_slice_from(trimmed, 16))
   } else {
     None
   }
@@ -1181,9 +1181,7 @@ fn commit_resolve_pathspec(root : String, pathspec : String) -> String {
   }
   let abs = normalize_path(cwd + "/" + pathspec)
   if abs.has_prefix(root + "/") {
-    abs[root.length() + 1:].to_string() catch {
-      _ => pathspec
-    }
+    string_slice_from(abs, root.length() + 1)
   } else {
     pathspec
   }

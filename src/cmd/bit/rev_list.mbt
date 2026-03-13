@@ -826,7 +826,7 @@ async fn rev_list_test_bitmap(fs : OsFs, git_dir : String) -> Unit raise Error {
   if bitmap_data is None {
     match find_pack_with_bitmap(fs, pack_dir) {
       Some(pack_name) => {
-        let stem = (try! pack_name[:pack_name.length() - 5]).to_string()
+        let stem = string_slice_to(pack_name, pack_name.length() - 5)
         let bmp_path = pack_dir + "/" + stem + ".bitmap"
         bitmap_data = midx_try_read_file(fs, bmp_path)
       }

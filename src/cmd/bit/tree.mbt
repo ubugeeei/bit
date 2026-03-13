@@ -37,7 +37,7 @@ fn temp_root_dir() -> String {
   match @sys.get_env_var("TMPDIR") {
     Some(dir) =>
       if dir.has_suffix("/") && dir.length() > 1 {
-        (try! dir[:dir.length() - 1]).to_string()
+        string_slice_to(dir, dir.length() - 1)
       } else {
         dir
       }

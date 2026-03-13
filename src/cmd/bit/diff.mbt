@@ -1408,11 +1408,11 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
           )
         }
         _ if arg.has_prefix("-U") && arg.length() > 2 => {
-          let num_str = (try! arg[2:]).to_string()
+          let num_str = string_slice_from(arg, 2)
           context_lines = @strconv.parse_int(num_str)
         }
         _ if arg.has_prefix("--unified=") => {
-          let num_str = (try! arg[10:]).to_string()
+          let num_str = string_slice_from(arg, 10)
           context_lines = @strconv.parse_int(num_str)
         }
         _ if not(arg.has_prefix("-")) =>
