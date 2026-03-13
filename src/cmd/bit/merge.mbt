@@ -87,6 +87,7 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
   let mut no_ff = false
   let mut ff_only = false
   let mut squash = false
+  let mut quiet = false
   let mut abort_merge = false
   let mut continue_merge = false
   let mut i = 0
@@ -134,6 +135,11 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
         i += 1
         continue
       }
+      "-q" | "--quiet" => {
+        quiet = true
+        i += 1
+        continue
+      }
       "--abort" => {
         abort_merge = true
         i += 1
@@ -178,7 +184,9 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
         err if @async.is_cancellation_error(err) => raise err
         _ => ()
       }
-      print_line("Merge aborted.")
+      if not(quiet) {
+        print_line("Merge aborted.")
+      }
     } else {
       @stdio.stderr.write(
         "fatal: There is no merge to abort (ORIG_HEAD missing).",
@@ -227,7 +235,9 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
       err if @async.is_cancellation_error(err) => raise err
       _ => ()
     }
-    print_line("[\{short}] \{msg}")
+    if not(quiet) {
+      print_line("[\{short}] \{msg}")
+    }
     return
   }
   guard target_ref is Some(refspec) else {
@@ -263,7 +273,10 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
       fs, fs, root, tid, msg, author, timestamp,
     )
     match result.status {
-      @bitlib.MergeStatus::AlreadyUpToDate => print_line("Already up to date.")
+      @bitlib.MergeStatus::AlreadyUpToDate =>
+        if not(quiet) {
+          print_line("Already up to date.")
+        }
       @bitlib.MergeStatus::FastForward | @bitlib.MergeStatus::Merged => {
         // Reset HEAD but keep working tree changes
         let head = @bitrepo.rev_parse(rfs, git_dir, "HEAD")
@@ -275,7 +288,9 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
             )
           None => ()
         }
-        print_line("Squash commit -- not updating HEAD")
+        if not(quiet) {
+          print_line("Squash commit -- not updating HEAD")
+        }
         // Save merge message for later commit
         wfs.write_string(
           git_dir + "/SQUASH_MSG",
@@ -283,9 +298,11 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
         )
       }
       @bitlib.MergeStatus::Conflicted => {
-        print_line("CONFLICT: Merge conflict")
-        for path in result.conflicts {
-          print_line("  \{path}")
+        if not(quiet) {
+          print_line("CONFLICT: Merge conflict")
+          for path in result.conflicts {
+            print_line("  \{path}")
+          }
         }
         @sys.exit(1)
       }
@@ -359,7 +376,9 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
       ),
     )
     let short = String::unsafe_substring(commit_id.to_hex(), start=0, end=7)
-    print_line("Merge made by the 'ort' strategy (--no-ff). [\{short}]")
+    if not(quiet) {
+      print_line("Merge made by the 'ort' strategy (--no-ff). [\{short}]")
+    }
     return
   }
   // Regular merge
@@ -367,29 +386,44 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
     fs, fs, root, tid, msg, author, timestamp,
   )
   match result.status {
-    @bitlib.MergeStatus::AlreadyUpToDate => print_line("Already up to date.")
+    @bitlib.MergeStatus::AlreadyUpToDate =>
+      if not(quiet) {
+        print_line("Already up to date.")
+      }
     @bitlib.MergeStatus::FastForward =>
       match result.commit_id {
         Some(id) => {
           let short = String::unsafe_substring(id.to_hex(), start=0, end=7)
-          print_line("Fast-forward to \{short}")
+          if not(quiet) {
+            print_line("Fast-forward to \{short}")
+          }
         }
-        None => print_line("Fast-forward")
+        None =>
+          if not(quiet) {
+            print_line("Fast-forward")
+          }
       }
     @bitlib.MergeStatus::Merged =>
       match result.commit_id {
         Some(id) => {
           let short = String::unsafe_substring(id.to_hex(), start=0, end=7)
-          print_line("Merge made by the 'ort' strategy. [\{short}]")
+          if not(quiet) {
+            print_line("Merge made by the 'ort' strategy. [\{short}]")
+          }
         }
-        None => print_line("Merged")
+        None =>
+          if not(quiet) {
+            print_line("Merged")
+          }
       }
     @bitlib.MergeStatus::Conflicted => {
-      print_line("CONFLICT (content): Merge conflict in the following files:")
-      for path in result.conflicts {
-        print_line("  \{path}")
+      if not(quiet) {
+        print_line("CONFLICT (content): Merge conflict in the following files:")
+        for path in result.conflicts {
+          print_line("  \{path}")
+        }
+        print_line("Automatic merge failed; fix conflicts and then commit.")
       }
-      print_line("Automatic merge failed; fix conflicts and then commit.")
       @sys.exit(1)
     }
   }

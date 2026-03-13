@@ -23,6 +23,68 @@ test "merge: strategy options fall back to real git" {
 }
 
 ///|
+let merge_wbtest_shim_lock : @async.Semaphore = @async.Semaphore::new(
+  1,
+  initial_value=1,
+)
+
+///|
+fn merge_wbtest_safe_dir_component(path : String) -> String {
+  let buf = StringBuilder::new()
+  for ch in path {
+    if (ch >= 'a' && ch <= 'z') ||
+      (ch >= 'A' && ch <= 'Z') ||
+      (ch >= '0' && ch <= '9') {
+      buf.write_char(ch)
+    } else {
+      buf.write_char('_')
+    }
+  }
+  buf.to_string()
+}
+
+///|
+async fn merge_wbtest_collect_shim_git(
+  cwd : String,
+  args : Array[String],
+) -> (Int, String, String) raise Error {
+  merge_wbtest_shim_lock.acquire()
+  defer merge_wbtest_shim_lock.release()
+  let repo_root = @env.current_dir().unwrap_or(".")
+  let shim_git = repo_root + "/tools/git-shim/bin/git"
+  let shim_moon = "/tmp/bit-merge-shim-moon.sh"
+  let target_dir = "/tmp/bit-merge-shim-target-" +
+    merge_wbtest_safe_dir_component(cwd)
+  let fs = OsFs::new()
+  fs.write_string(
+    shim_moon,
+    "#!/bin/sh\nset -eu\ncd '\{repo_root}'\nexec moon run --target native --target-dir '\{target_dir}' src/cmd/bit -- \"$@\"\n",
+  )
+  let chmod_code = @process.run("chmod", ["+x", shim_moon], inherit_env=true)
+  assert_eq(chmod_code, 0)
+  let env : Map[String, String] = {
+    "SHIM_REAL_GIT": repo_root + "/third_party/git/git",
+    "SHIM_EXEC_PATH": repo_root + "/third_party/git",
+    "SHIM_MOON": shim_moon,
+    "SHIM_CMDS": "merge",
+    "SHIM_STRICT": "1",
+  }
+  let git_args : Array[String] = ["-C", cwd]
+  for arg in args {
+    git_args.push(arg)
+  }
+  let (code, stdout, stderr) = @process.collect_output(
+    shim_git,
+    git_args[:],
+    extra_env=env,
+    inherit_env=true,
+  )
+  let stdout_text = stdout.text() catch { _ => "" }
+  let stderr_text = stderr.text() catch { _ => "" }
+  (code, stdout_text, stderr_text)
+}
+
+///|
 async test "merge: command path supports strategy ours via fallback" {
   @bitnative.init_native_io()
   let fs = OsFs::new()
@@ -71,8 +133,6 @@ async test "merge: command path falls back when target is a merge commit" {
   fs.mkdir_p(root)
   let repo_dir = root + "/repo"
 
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-
   grep_test_run_git(root, ["init", "--initial-branch=main", "-q", "repo"])
   grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
   grep_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
@@ -91,12 +151,9 @@ async test "merge: command path falls back when target is a merge commit" {
   grep_test_run_git(repo_dir, ["commit", "-q", "-am", "B"])
 
   grep_test_run_git(repo_dir, ["switch", "-q", "topic"])
-  let conflict_code = @process.run(
-    "git",
-    ["merge", "-m", "M", "branchB"],
-    inherit_env=true,
-    cwd=repo_dir,
-  )
+  let (conflict_code, _) = grep_test_git_stderr(repo_dir, [
+    "merge", "-m", "M", "branchB",
+  ])
   assert_true(conflict_code != 0)
   fs.write_string(repo_dir + "/file", "A\nB\n")
   grep_test_run_git(repo_dir, ["add", "file"])
@@ -115,20 +172,17 @@ async test "merge: command path falls back when target is a merge commit" {
   grep_test_run_git(repo_dir, ["merge", "-q", "-m", "R", "-Xtheirs", "branchY"])
 
   grep_test_run_git(repo_dir, ["switch", "-q", "topic"])
-  @sys.set_env_var("GIT_SHIM_PWD", repo_dir)
-  handle_merge(["-m", "N", "branchR"]) catch {
-    err => fail("handle_merge failed: \{err}")
-  }
+  let (merge_code, merge_stdout, merge_stderr) = merge_wbtest_collect_shim_git(repo_dir, [
+    "merge", "-q", "-m", "N", "branchR",
+  ])
+  assert_eq(merge_code, 0)
+  assert_eq(merge_stdout, "")
+  assert_eq(merge_stderr, "")
 
   assert_eq(
     trim_string(grep_test_git_stdout(repo_dir, ["log", "-1", "--format=%s"])),
     "N",
   )
-
-  match prev_shim_pwd {
-    Some(value) => @sys.set_env_var("GIT_SHIM_PWD", value)
-    None => @sys.unset_env_var("GIT_SHIM_PWD")
-  }
   cleanup_tree(fs, root)
 }
 
@@ -141,8 +195,6 @@ async test "merge: --continue records MERGE_HEAD as second parent" {
   cleanup_tree(fs, root)
   fs.mkdir_p(root)
   let repo_dir = root + "/repo"
-
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
 
   grep_test_run_git(root, ["init", "--initial-branch=main", "-q", "repo"])
   grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
@@ -161,12 +213,9 @@ async test "merge: --continue records MERGE_HEAD as second parent" {
   grep_test_run_git(repo_dir, ["commit", "-q", "-am", "main"])
 
   @sys.set_env_var("GIT_SHIM_PWD", repo_dir)
-  let conflict_code = @process.run(
-    "git",
-    ["merge", "-m", "merge", "side"],
-    inherit_env=true,
-    cwd=repo_dir,
-  )
+  let (conflict_code, _) = grep_test_git_stderr(repo_dir, [
+    "merge", "-m", "merge", "side",
+  ])
   assert_true(conflict_code != 0)
 
   let merge_head = decode_bytes(fs.read_file(repo_dir + "/.git/MERGE_HEAD"))
@@ -174,9 +223,12 @@ async test "merge: --continue records MERGE_HEAD as second parent" {
   fs.write_string(repo_dir + "/file", "main\nside\n")
   grep_test_run_git(repo_dir, ["add", "file"])
 
-  handle_merge(["--continue"]) catch {
-    err => fail("handle_merge --continue failed: \{err}")
-  }
+  let (continue_code, continue_stdout, continue_stderr) = merge_wbtest_collect_shim_git(repo_dir, [
+    "merge", "-q", "--continue",
+  ])
+  assert_eq(continue_code, 0)
+  assert_eq(continue_stdout, "")
+  assert_eq(continue_stderr, "")
 
   let git_dir = repo_dir + "/.git"
   let head = @bitlib.resolve_head_commit(fs, git_dir).unwrap()
@@ -186,11 +238,6 @@ async test "merge: --continue records MERGE_HEAD as second parent" {
   assert_eq(info.parents.length(), 2)
   assert_eq(info.parents[1].to_hex(), merge_head)
   assert_false(fs.is_file(repo_dir + "/.git/MERGE_HEAD"))
-
-  match prev_shim_pwd {
-    Some(value) => @sys.set_env_var("GIT_SHIM_PWD", value)
-    None => @sys.unset_env_var("GIT_SHIM_PWD")
-  }
   cleanup_tree(fs, root)
 }
 
