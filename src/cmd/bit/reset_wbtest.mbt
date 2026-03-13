@@ -22,6 +22,8 @@ async fn reset_wbtest_git_exit_code(
 ///|
 async test "reset pathspec: trailing slash unstages submodule gitlink" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-reset-submodule-trailing-" +
     get_current_timestamp().to_string()
@@ -85,6 +87,8 @@ async test "reset pathspec: trailing slash unstages submodule gitlink" {
 ///|
 async test "reset: hard restores a valid root cache-tree for indexed-object negation" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-reset-hard-indexed-objects-" +
     get_current_timestamp().to_string()

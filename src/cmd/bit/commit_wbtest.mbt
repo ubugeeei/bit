@@ -3,8 +3,28 @@ async fn commit_wbtest_run_git(
   cwd : String,
   args : Array[String],
 ) -> Unit raise Error {
-  let code = @process.run("git", args[:], inherit_env=true, cwd~)
+  let (code, _, _) = @process.collect_output(
+    "git",
+    args[:],
+    inherit_env=true,
+    cwd~,
+  )
   assert_eq(code, 0)
+}
+
+///|
+async fn commit_wbtest_git_stderr(
+  cwd : String,
+  args : Array[String],
+) -> (Int, String) raise Error {
+  let (code, _, stderr) = @process.collect_output(
+    "git",
+    args[:],
+    inherit_env=true,
+    cwd~,
+  )
+  let text = stderr.text() catch { _ => "" }
+  (code, text)
 }
 
 ///|
@@ -120,6 +140,8 @@ test "commit: cleanup mode validation honors verbatim" {
 ///|
 async test "commit: pathspec staging updates submodule gitlink entry" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-commit-submodule-pathspec-" +
     get_current_timestamp().to_string()
@@ -182,6 +204,8 @@ async test "commit: pathspec staging updates submodule gitlink entry" {
 ///|
 async test "commit: amend preserves distinct author and committer dates" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-commit-author-date-" +
     get_current_timestamp().to_string()
@@ -214,7 +238,8 @@ async test "commit: amend preserves distinct author and committer dates" {
   @sys.set_env_var("GIT_AUTHOR_DATE", "1112911993 -0700")
   @sys.set_env_var("GIT_COMMITTER_DATE", "1112912001 +0900")
 
-  handle_commit(["--amend", "-m", "rewritten"]) catch {
+  @sys.set_env_var("GIT_SHIM_PWD", root)
+  handle_commit(["-q", "--amend", "-m", "rewritten"]) catch {
     err => fail("handle_commit failed: \{err}")
   }
 
@@ -269,6 +294,8 @@ async test "commit: amend preserves distinct author and committer dates" {
 ///|
 async test "commit: merge state commit records MERGE_HEAD as second parent" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-commit-merge-heads-" +
     get_current_timestamp().to_string()
@@ -293,12 +320,9 @@ async test "commit: merge state commit records MERGE_HEAD as second parent" {
   fs.write_string(root + "/file", "main\n")
   commit_wbtest_run_git(root, ["commit", "-q", "-am", "main"])
 
-  let conflict_code = @process.run(
-    "git",
-    ["merge", "-m", "merge", "side"],
-    inherit_env=true,
-    cwd=root,
-  )
+  let (conflict_code, _) = commit_wbtest_git_stderr(root, [
+    "merge", "-m", "merge", "side",
+  ])
   assert_true(conflict_code != 0)
   let merge_head = decode_bytes(fs.read_file(root + "/.git/MERGE_HEAD"))
     |> trim_string
@@ -307,7 +331,7 @@ async test "commit: merge state commit records MERGE_HEAD as second parent" {
   commit_wbtest_run_git(root, ["add", "file"])
 
   @sys.set_env_var("GIT_SHIM_PWD", root)
-  handle_commit(["-a", "-m", "merge"]) catch {
+  handle_commit(["-q", "-a", "-m", "merge"]) catch {
     err => fail("handle_commit failed: \{err}")
   }
 

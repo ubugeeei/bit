@@ -32,7 +32,9 @@ test "diff: apply relative files filters outside prefix" {
 }
 
 ///|
-test "diff: resolve relative prefix from cwd and config" {
+async test "diff: resolve relative prefix from cwd and config" {
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = @bitcore.TestFs::new()
   fs.mkdir_p("/repo/.git")
   fs.write_string("/repo/.git/config", "[diff]\n\trelative = true\n")
@@ -344,6 +346,8 @@ test "diff: gitlink patch includes subproject commit lines" {
 ///|
 async test "diff: real fs diff_worktree sees gitlink head change" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-diff-real-fs-gitlink-" +
     get_current_timestamp().to_string()
@@ -352,7 +356,7 @@ async test "diff: real fs diff_worktree sees gitlink head change" {
   let init_dir = root + "/init"
   let super_dir = root + "/super"
 
-  let (code_init, _) = @process.collect_stdout(
+  let (code_init, _, _) = @process.collect_output(
     "/usr/bin/git",
     ["init", "--initial-branch=main", "-q", init_dir],
     inherit_env=true,
@@ -369,7 +373,7 @@ async test "diff: real fs diff_worktree sees gitlink head change" {
   let rev1 = submodule_wbtest_git_stdout(init_dir, ["rev-parse", "HEAD"])
     |> add_test_trim_trailing_newline
 
-  let (code_super, _) = @process.collect_stdout(
+  let (code_super, _, _) = @process.collect_output(
     "/usr/bin/git",
     ["init", "--initial-branch=main", "-q", super_dir],
     inherit_env=true,
@@ -383,14 +387,14 @@ async test "diff: real fs diff_worktree sees gitlink head change" {
 
   let prev_allow_protocol = @sys.get_env_var("GIT_ALLOW_PROTOCOL")
   @sys.set_env_var("GIT_ALLOW_PROTOCOL", "file")
-  let (code_add, _) = @process.collect_stdout(
+  let (code_add, _, _) = @process.collect_output(
     "/usr/bin/git",
     ["-C", super_dir, "submodule", "add", "./../init", "init"],
     inherit_env=true,
     cwd=root,
   )
   assert_eq(code_add, 0)
-  let (code_commit, _) = @process.collect_stdout(
+  let (code_commit, _, _) = @process.collect_output(
     "/usr/bin/git",
     ["-C", super_dir, "commit", "-qam", "initial"],
     inherit_env=true,
@@ -400,14 +404,14 @@ async test "diff: real fs diff_worktree sees gitlink head change" {
   submodule_wbtest_restore_env("GIT_ALLOW_PROTOCOL", prev_allow_protocol)
 
   fs.write_string(super_dir + "/init/b", "b\n")
-  let (code_sub_add, _) = @process.collect_stdout(
+  let (code_sub_add, _, _) = @process.collect_output(
     "/usr/bin/git",
     ["-C", super_dir + "/init", "add", "b"],
     inherit_env=true,
     cwd=root,
   )
   assert_eq(code_sub_add, 0)
-  let (code_sub_commit, _) = @process.collect_stdout(
+  let (code_sub_commit, _, _) = @process.collect_output(
     "/usr/bin/git",
     ["-C", super_dir + "/init", "commit", "-q", "-m", "second"],
     inherit_env=true,

@@ -31,7 +31,9 @@ test "scalar: resolve register path from enlistment root" {
 }
 
 ///|
-test "scalar: register + unregister maintenance repo entries" {
+async test "scalar: register + unregister maintenance repo entries" {
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-scalar-config-" +
     get_current_timestamp().to_string()

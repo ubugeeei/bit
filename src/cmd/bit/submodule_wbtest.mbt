@@ -14,7 +14,12 @@ async fn submodule_wbtest_run_git(
   cwd : String,
   args : Array[String],
 ) -> Unit raise Error {
-  let code = @process.run("git", args[:], inherit_env=true, cwd~)
+  let (code, _, _) = @process.collect_output(
+    "git",
+    args[:],
+    inherit_env=true,
+    cwd~,
+  )
   assert_eq(code, 0)
 }
 
@@ -23,7 +28,7 @@ async fn submodule_wbtest_git_stdout(
   cwd : String,
   args : Array[String],
 ) -> String raise Error {
-  let (code, stdout) = @process.collect_stdout(
+  let (code, stdout, _) = @process.collect_output(
     "git",
     args[:],
     inherit_env=true,
@@ -40,7 +45,7 @@ async fn submodule_wbtest_git_stderr(
   cwd : String,
   args : Array[String],
 ) -> (Int, String) raise Error {
-  let (code, stderr) = @process.collect_stderr(
+  let (code, _, stderr) = @process.collect_output(
     "git",
     args[:],
     inherit_env=true,
@@ -76,7 +81,7 @@ async fn submodule_wbtest_collect_shim_git_stderr(
   for arg in args {
     git_args.push(arg)
   }
-  let (code, stderr) = @process.collect_stderr(
+  let (code, _, stderr) = @process.collect_output(
     shim_git,
     git_args[:],
     extra_env=env,
@@ -163,6 +168,8 @@ async test "submodule absorbgitdirs: gitlink without gitmodules entry is fatal" 
 ///|
 async test "submodule absorbgitdirs: embedded repo migrates and update reuses modules repo" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-absorbgitdirs-update-" +
     get_current_timestamp().to_string()
@@ -218,6 +225,8 @@ async test "submodule absorbgitdirs: embedded repo migrates and update reuses mo
 ///|
 async test "submodule add: relative local url works from absorbed submodule root" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-add-nested-relative-" +
     get_current_timestamp().to_string()
@@ -274,6 +283,8 @@ async test "submodule add: relative local url works from absorbed submodule root
 ///|
 async test "submodule deinit: failure on untracked file keeps config" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-deinit-untracked-keeps-config-" +
     get_current_timestamp().to_string()
@@ -296,6 +307,8 @@ async test "submodule deinit: failure on untracked file keeps config" {
 ///|
 async test "submodule deinit: failure on head mismatch keeps config" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-deinit-head-mismatch-keeps-config-" +
     get_current_timestamp().to_string()
@@ -336,7 +349,7 @@ async test "submodule update --init: active filters keep named active unset for 
     "[submodule \"sub0\"]\n\tpath = sub0\n\turl = ./sub0\n" +
     "[submodule \"sub1\"]\n\tpath = sub1\n\turl = ./sub1\n",
   )
-  handle_submodule_update(fs, super_dir, git_dir, ["--init"])
+  handle_submodule_update(fs, super_dir, git_dir, ["--quiet", "--init"])
 
   let sub0_active = read_submodule_config_value(rfs, git_dir, "sub0", "active")
   let sub1_active = read_submodule_config_value(rfs, git_dir, "sub1", "active")
@@ -368,7 +381,7 @@ async test "submodule update --init: no global active filters reinitialize all k
     "[submodule \"example2\"]\n\tpath = example2\n\turl = ./sub1\n",
   )
 
-  handle_submodule_update(fs, root, git_dir, ["--init"])
+  handle_submodule_update(fs, root, git_dir, ["--quiet", "--init"])
 
   let example_url = read_submodule_config_value(rfs, git_dir, "example", "url")
   let example2_url = read_submodule_config_value(
@@ -414,6 +427,7 @@ async test "submodule add: writes explicit active when global pathspec does not 
   ])
 
   handle_submodule_add(fs, addtest_dir, addtest_dir + "/.git", [
+    "-q",
     normalize_path(source_dir),
     "mod",
   ])
@@ -463,6 +477,7 @@ async test "submodule add: skips explicit active when global pathspec matches" {
   ])
 
   handle_submodule_add(fs, addtest_dir, addtest_dir + "/.git", [
+    "-q",
     normalize_path(source_dir),
     "sub1",
   ])
@@ -516,6 +531,8 @@ async test "submodule update: missing gitmodules path prints not initialized" {
 ///|
 async test "submodule update --remote: moved source fails until set-url" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-update-remote-set-url-" +
     get_current_timestamp().to_string()
@@ -583,7 +600,9 @@ async test "submodule update --remote: moved source fails until set-url" {
 }
 
 ///|
-test "submodule add: template dir is read from global config" {
+async test "submodule add: template dir is read from global config" {
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-template-dir-" +
     get_current_timestamp().to_string()
@@ -633,6 +652,8 @@ async test "submodule add: post-checkout hook runs in submodule worktree" {
 ///|
 async test "submodule add: template hook keeps executable bit" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-template-hook-mode-" +
     get_current_timestamp().to_string()
@@ -1201,6 +1222,8 @@ test "submodule status infos: ignores config-only path" {
 ///|
 async test "submodule status: ignores config-only entries" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-status-config-only-" +
     get_current_timestamp().to_string()
@@ -1338,6 +1361,8 @@ async test "submodule add: detects hash mismatch before writing gitmodules" {
 ///|
 async test "submodule deinit: unregisters config and removes worktree gitfile" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-deinit-basic-" +
     get_current_timestamp().to_string()
@@ -1368,7 +1393,7 @@ async test "submodule deinit: unregisters config and removes worktree gitfile" {
   submodule_wbtest_run_git(super_dir, ["submodule", "add", "./../init", "init"])
   submodule_wbtest_restore_env("GIT_ALLOW_PROTOCOL", prev_allow_protocol)
 
-  handle_submodule_deinit(fs, super_dir, super_dir + "/.git", ["init"])
+  handle_submodule_deinit(fs, super_dir, super_dir + "/.git", ["-q", "init"])
 
   let config_content = decode_bytes(fs.read_file(super_dir + "/.git/config"))
   let module_config = decode_bytes(
@@ -1386,6 +1411,8 @@ async test "submodule deinit: unregisters config and removes worktree gitfile" {
 ///|
 async test "submodule deinit: missing worktree path is recreated as empty directory" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-deinit-missing-worktree-" +
     get_current_timestamp().to_string()
@@ -1418,17 +1445,10 @@ async test "submodule deinit: missing worktree path is recreated as empty direct
   submodule_wbtest_restore_env("GIT_ALLOW_PROTOCOL", prev_allow_protocol)
 
   cleanup_tree(fs, super_dir + "/init")
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
-  @sys.set_env_var("GIT_SHIM_CWD", super_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", super_dir)
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-
-  handle_submodule(["init"])
-  handle_submodule(["deinit", "init"])
+  submodule_wbtest_run_shim_git(super_dir, ["submodule", "init", "--quiet"])
+  submodule_wbtest_run_shim_git(super_dir, [
+    "submodule", "deinit", "--quiet", "init",
+  ])
 
   let config_content = decode_bytes(fs.read_file(super_dir + "/.git/config"))
   assert_false(config_content.contains("[submodule \"init\"]"))
@@ -1436,10 +1456,6 @@ async test "submodule deinit: missing worktree path is recreated as empty direct
   assert_eq(fs.readdir(super_dir + "/init").length(), 0)
   assert_false(fs.is_file(super_dir + "/init/.git"))
 
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
   cleanup_tree(fs, root)
 }
 
@@ -1478,16 +1494,9 @@ async test "submodule deinit: cli path removes config-only entry from gitmodules
     "[core]\n\tworktree = ../../../init\n",
   )
 
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
-  @sys.set_env_var("GIT_SHIM_CWD", super_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", super_dir)
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-
-  handle_submodule(["deinit", "init"])
+  submodule_wbtest_run_shim_git(super_dir, [
+    "submodule", "deinit", "--quiet", "init",
+  ])
 
   let config_content = decode_bytes(fs.read_file(super_dir + "/.git/config"))
   let module_config = decode_bytes(
@@ -1497,10 +1506,6 @@ async test "submodule deinit: cli path removes config-only entry from gitmodules
   assert_true(config_content.contains("[submodule \"example2\"]"))
   assert_false(module_config.contains("worktree ="))
 
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
   cleanup_tree(fs, root)
 }
 
@@ -1519,6 +1524,8 @@ test "submodule gitmodules: url without path is treated as unmapped" {
 ///|
 async test "submodule update: recreates missing worktree before writing gitfile" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-update-recreate-" +
     get_current_timestamp().to_string()
@@ -1553,17 +1560,8 @@ async test "submodule update: recreates missing worktree before writing gitfile"
   submodule_wbtest_restore_env("GIT_ALLOW_PROTOCOL", prev_allow_protocol)
 
   cleanup_tree(fs, super_dir + "/init")
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
-  @sys.set_env_var("GIT_SHIM_CWD", super_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", super_dir)
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-
-  handle_submodule(["init"])
-  handle_submodule(["update", "-q"])
+  submodule_wbtest_run_shim_git(super_dir, ["submodule", "init", "--quiet"])
+  submodule_wbtest_run_shim_git(super_dir, ["submodule", "update", "-q"])
 
   assert_true(fs.is_dir(super_dir + "/init"))
   assert_true(fs.is_file(super_dir + "/init/.git"))
@@ -1574,16 +1572,14 @@ async test "submodule update: recreates missing worktree before writing gitfile"
     |> add_test_trim_trailing_newline
   assert_eq(head, rev1)
 
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
   cleanup_tree(fs, root)
 }
 
 ///|
 async test "submodule update: linked worktree reads shared submodule config" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-update-linked-worktree-" +
     get_current_timestamp().to_string()
@@ -1603,21 +1599,9 @@ async test "submodule update: linked worktree reads shared submodule config" {
   )
 
   let prev_allow_protocol = @sys.get_env_var("GIT_ALLOW_PROTOCOL")
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
   @sys.set_env_var("GIT_ALLOW_PROTOCOL", "file")
-  @sys.set_env_var("GIT_SHIM_CWD", linked_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", @env.current_dir().unwrap_or("."))
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-  handle_submodule(["update"])
+  submodule_wbtest_run_shim_git(linked_dir, ["submodule", "update", "--quiet"])
   submodule_wbtest_restore_env("GIT_ALLOW_PROTOCOL", prev_allow_protocol)
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
 
   assert_true(fs.is_file(linked_dir + "/init/.git"))
   let head = submodule_wbtest_git_stdout(linked_dir + "/init", [
@@ -1630,6 +1614,8 @@ async test "submodule update: linked worktree reads shared submodule config" {
 ///|
 async test "submodule update: restores deinitialized worktree when another submodule exists" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-update-two-submodules-" +
     get_current_timestamp().to_string()
@@ -1680,17 +1666,12 @@ async test "submodule update: restores deinitialized worktree when another submo
   submodule_wbtest_run_git(super_dir, ["commit", "-qam", "initial"])
   submodule_wbtest_restore_env("GIT_ALLOW_PROTOCOL", prev_allow_protocol)
 
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
-  @sys.set_env_var("GIT_SHIM_CWD", super_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", super_dir)
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-
-  handle_submodule(["deinit", "init"])
-  handle_submodule(["update", "--init"])
+  submodule_wbtest_run_shim_git(super_dir, [
+    "submodule", "deinit", "--quiet", "init",
+  ])
+  submodule_wbtest_run_shim_git(super_dir, [
+    "submodule", "update", "--quiet", "--init",
+  ])
 
   assert_true(fs.is_dir(super_dir + "/init"))
   assert_true(fs.is_file(super_dir + "/init/.git"))
@@ -1709,10 +1690,6 @@ async test "submodule update: restores deinitialized worktree when another submo
     |> add_test_trim_trailing_newline
   assert_eq(restored_other, other_head)
 
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
   cleanup_tree(fs, root)
 }
 
@@ -1751,16 +1728,7 @@ async test "submodule init: relative url resolves against origin remote" {
     "config", "remote.origin.url", "ssh://hostname/repo",
   ])
 
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
-  @sys.set_env_var("GIT_SHIM_CWD", reltest_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", reltest_dir)
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-
-  handle_submodule(["init"])
+  submodule_wbtest_run_shim_git(reltest_dir, ["submodule", "init", "--quiet"])
 
   let config_url = submodule_wbtest_git_stdout(reltest_dir, [
       "config", "--get", "submodule.sub.url",
@@ -1768,10 +1736,6 @@ async test "submodule init: relative url resolves against origin remote" {
     |> add_test_trim_trailing_newline
   assert_eq(config_url, "ssh://hostname/subrepo")
 
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
   cleanup_tree(fs, root)
 }
 
@@ -1806,17 +1770,10 @@ async test "submodule add: relative repo with normalized path keeps resolved con
     "config", "remote.origin.url", "../foo/bar.git",
   ])
 
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
-  @sys.set_env_var("GIT_SHIM_CWD", reltest_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", reltest_dir)
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-
-  handle_submodule(["add", "../bar/a/b/c", "./a/b/c"])
-  handle_submodule(["init"])
+  submodule_wbtest_run_shim_git(reltest_dir, [
+    "submodule", "add", "-q", "../bar/a/b/c", "./a/b/c",
+  ])
+  submodule_wbtest_run_shim_git(reltest_dir, ["submodule", "init", "--quiet"])
 
   let config_url = submodule_wbtest_git_stdout(reltest_dir, [
       "config", "--get", "submodule.a/b/c.url",
@@ -1824,10 +1781,6 @@ async test "submodule add: relative repo with normalized path keeps resolved con
     |> add_test_trim_trailing_newline
   assert_eq(config_url, "../foo/bar/a/b/c")
 
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
   cleanup_tree(fs, root)
 }
 
@@ -1856,16 +1809,13 @@ async test "submodule add: quiet suppresses fetch stderr and writes expected git
     "config", "user.email", "test@example.com",
   ])
 
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
-  @sys.set_env_var("GIT_SHIM_CWD", addtest_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", addtest_dir)
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-
-  handle_submodule(["add", "-q", normalize_path(root), "submod"])
+  submodule_wbtest_run_shim_git(addtest_dir, [
+    "submodule",
+    "add",
+    "-q",
+    normalize_path(root),
+    "submod",
+  ])
 
   let dotgit = decode_bytes(fs.read_file(addtest_dir + "/submod/.git"))
   let core_worktree = submodule_wbtest_git_stdout(addtest_dir + "/submod", [
@@ -1875,10 +1825,6 @@ async test "submodule add: quiet suppresses fetch stderr and writes expected git
   assert_eq(dotgit, "gitdir: ../.git/modules/submod\n")
   assert_eq(core_worktree, "../../../submod")
 
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
   cleanup_tree(fs, root)
 }
 
@@ -1917,17 +1863,10 @@ async test "submodule add: depth=1 keeps shallow history for local file url" {
     "config", "user.email", "test@example.com",
   ])
 
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
-  @sys.set_env_var("GIT_SHIM_CWD", super_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", super_dir)
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-
-  handle_submodule([
+  submodule_wbtest_run_shim_git(super_dir, [
+    "submodule",
     "add",
+    "-q",
     "--depth=1",
     "file://" + normalize_path(source_dir),
     "submodule",
@@ -1943,10 +1882,6 @@ async test "submodule add: depth=1 keeps shallow history for local file url" {
   assert_eq(count, "1")
   assert_eq(shallow, head_id + "\n")
 
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
   cleanup_tree(fs, root)
 }
 
@@ -1984,16 +1919,13 @@ async test "submodule add: detached local source still copies target history" {
     "config", "user.email", "test@example.com",
   ])
 
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
-  @sys.set_env_var("GIT_SHIM_CWD", super_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", super_dir)
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-
-  handle_submodule(["add", normalize_path(source_dir), "submodule"])
+  submodule_wbtest_run_shim_git(super_dir, [
+    "submodule",
+    "add",
+    "-q",
+    normalize_path(source_dir),
+    "submodule",
+  ])
 
   let count = submodule_wbtest_git_stdout(super_dir + "/submodule", [
       "rev-list", "--count", "HEAD",
@@ -2002,10 +1934,6 @@ async test "submodule add: detached local source still copies target history" {
   submodule_wbtest_run_git(super_dir + "/submodule", ["checkout", "-q", "HEAD^"])
   assert_eq(count, "2")
 
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
   cleanup_tree(fs, root)
 }
 
@@ -2057,16 +1985,13 @@ async test "submodule add: cloned gitlink repo stays clean for diff-files" {
     "config", "user.email", "test@example.com",
   ])
 
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
-  @sys.set_env_var("GIT_SHIM_CWD", addtest_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", addtest_dir)
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-
-  handle_submodule(["add", "-q", normalize_path(root), "submod"])
+  submodule_wbtest_run_shim_git(addtest_dir, [
+    "submodule",
+    "add",
+    "-q",
+    normalize_path(root),
+    "submod",
+  ])
   submodule_wbtest_run_git(addtest_dir + "/submod", [
     "update-index", "--refresh",
   ])
@@ -2074,10 +1999,6 @@ async test "submodule add: cloned gitlink repo stays clean for diff-files" {
   let stale = collect_diff_index_stale_entries(fs, addtest_dir + "/submod", [])
   assert_eq(stale.map(entry => entry.path), [])
 
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
   cleanup_tree(fs, root)
 }
 
@@ -2146,12 +2067,13 @@ async test "submodule add: force reconfigure existing submodule does not refetch
   ])
   let addtest_git_dir = addtest_dir + "/.git"
   handle_submodule_add(fs, addtest_dir, addtest_git_dir, [
+    "-q",
     normalize_path(source_dir),
     "submod",
   ])
   let bogus_url = normalize_path(addtest_dir + "/bogus-url")
   handle_submodule_add(fs, addtest_dir, addtest_git_dir, [
-    "--force", bogus_url, "submod",
+    "-q", "--force", bogus_url, "submod",
   ])
 
   let gitmodules_url = submodule_wbtest_git_stdout(addtest_dir, [
@@ -2269,6 +2191,7 @@ async test "submodule add: --name keeps separate module name and path" {
   ])
   let addtest_git_dir = addtest_dir + "/.git"
   handle_submodule_add(fs, addtest_dir, addtest_git_dir, [
+    "-q",
     "--name",
     "repo_new",
     normalize_path(source_dir),
@@ -2396,12 +2319,13 @@ async test "submodule add: branch keeps default branch head alongside requested 
   ])
   let addtest_git_dir = addtest_dir + "/.git"
   handle_submodule_add(fs, addtest_dir, addtest_git_dir, [
+    "-q",
     "-b",
     "initial",
     normalize_path(source_dir),
     "submod-branch",
   ])
-  handle_submodule_init(fs, addtest_dir, addtest_git_dir, [])
+  handle_submodule_init(fs, addtest_dir, addtest_git_dir, ["--quiet"])
 
   let head_ref = submodule_wbtest_git_stdout(addtest_dir + "/submod-branch", [
       "symbolic-ref", "HEAD",
@@ -2420,6 +2344,8 @@ async test "submodule add: branch keeps default branch head alongside requested 
 ///|
 async test "submodule sync: relative url resolves against superproject root when origin is absent" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-sync-relative-" +
     get_current_timestamp().to_string()
@@ -2452,16 +2378,9 @@ async test "submodule sync: relative url resolves against superproject root when
   ])
   submodule_wbtest_restore_env("GIT_ALLOW_PROTOCOL", prev_allow_protocol)
 
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
-  @sys.set_env_var("GIT_SHIM_CWD", super_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", super_dir)
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-
-  handle_submodule(["sync", "relative"])
+  submodule_wbtest_run_shim_git(super_dir, [
+    "submodule", "sync", "--quiet", "relative",
+  ])
 
   let config_url = submodule_wbtest_git_stdout(super_dir, [
       "config", "--get", "submodule.relative.url",
@@ -2475,16 +2394,14 @@ async test "submodule sync: relative url resolves against superproject root when
   assert_eq(config_url, expected)
   assert_eq(sub_origin, expected)
 
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
   cleanup_tree(fs, root)
 }
 
 ///|
 async test "submodule sync: relative url stays relative in config when origin exists" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-submodule-sync-origin-relative-" +
     get_current_timestamp().to_string()
@@ -2521,16 +2438,9 @@ async test "submodule sync: relative url stays relative in config when origin ex
   ])
   submodule_wbtest_restore_env("GIT_ALLOW_PROTOCOL", prev_allow_protocol)
 
-  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
-  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
-  let prev_git_dir = @sys.get_env_var("GIT_DIR")
-  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
-  @sys.set_env_var("GIT_SHIM_CWD", super_dir)
-  @sys.set_env_var("GIT_SHIM_PWD", super_dir)
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-
-  handle_submodule(["sync", "relative"])
+  submodule_wbtest_run_shim_git(super_dir, [
+    "submodule", "sync", "--quiet", "relative",
+  ])
 
   let config_url = submodule_wbtest_git_stdout(super_dir, [
       "config", "--get", "submodule.relative.url",
@@ -2543,9 +2453,5 @@ async test "submodule sync: relative url stays relative in config when origin ex
   assert_eq(config_url, "../repo")
   assert_eq(sub_origin, "../../repo")
 
-  submodule_wbtest_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
-  submodule_wbtest_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
-  submodule_wbtest_restore_env("GIT_DIR", prev_git_dir)
-  submodule_wbtest_restore_env("GIT_WORK_TREE", prev_work_tree)
   cleanup_tree(fs, root)
 }

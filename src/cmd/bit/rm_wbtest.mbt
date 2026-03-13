@@ -173,6 +173,8 @@ test "rm conflict: advice.rmhints=false omits hint lines" {
 ///|
 async test "rm: stage-only missing submodule is removable" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-rm-stage-added-submodule-" +
     get_current_timestamp().to_string()
@@ -236,6 +238,8 @@ async test "rm: stage-only missing submodule is removable" {
 ///|
 async test "rm: orphan checkout keeps tracked files removable" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-rm-orphan-" + get_current_timestamp().to_string()
   cleanup_tree(fs, root)
@@ -275,6 +279,8 @@ async test "rm: orphan checkout keeps tracked files removable" {
 ///|
 async test "rm: removing named submodule clears matching gitmodules section only" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-rm-named-submodule-" +
     get_current_timestamp().to_string()
@@ -347,6 +353,8 @@ async test "rm: removing named submodule clears matching gitmodules section only
 ///|
 async test "rm: cached submodule removal preserves gitmodules entry" {
   @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-rm-cached-submodule-" +
     get_current_timestamp().to_string()

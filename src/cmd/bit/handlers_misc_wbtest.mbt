@@ -63,6 +63,8 @@ test "config: set_config escapes quotes when appending to existing section" {
 
 ///|
 async test "config: --global writes to HOME/.gitconfig without delegation" {
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-config-global-" +
     get_current_timestamp().to_string()
