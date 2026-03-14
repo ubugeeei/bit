@@ -30,7 +30,7 @@ async fn checkout_wbtest_collect_shim_git_output(
   let chmod_code = @process.run("chmod", ["+x", shim_moon], inherit_env=true)
   assert_eq(chmod_code, 0)
   let env : Map[String, String] = {
-    "SHIM_REAL_GIT": repo_root + "/third_party/git/git",
+    "SHIM_REAL_GIT": wbtest_resolve_real_git(repo_root),
     "SHIM_EXEC_PATH": repo_root + "/third_party/git",
     "SHIM_MOON": shim_moon,
     "SHIM_CMDS": "checkout",

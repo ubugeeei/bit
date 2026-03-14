@@ -42,7 +42,7 @@ async fn show_wbtest_collect_shim_git_stderr(
   let repo_root = @env.current_dir().unwrap_or(".")
   let shim_git = repo_root + "/tools/git-shim/bin/git"
   let env : Map[String, String] = {
-    "SHIM_REAL_GIT": repo_root + "/third_party/git/git",
+    "SHIM_REAL_GIT": wbtest_resolve_real_git(repo_root),
     "SHIM_REAL_GIT_FALLBACK": "",
     "SHIM_EXEC_PATH": repo_root + "/third_party/git",
     "SHIM_MOON": repo_root + "/tools/git-shim/moon",
