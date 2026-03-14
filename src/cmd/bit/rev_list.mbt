@@ -103,6 +103,13 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
   let mut no_object_names = false
   let mut format : String? = None
   let mut pretty_color_cli_mode : String? = None
+  let mut topo_order = false
+  let mut date_order = false
+  let mut parents = false
+  let mut header = false
+  let mut use_nul = false
+  let mut boundary = false
+  let mut left_right = false
   let refs : Array[String] = []
   let excludes : Array[String] = []
   let mut i = 0
@@ -120,6 +127,15 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
       "--quiet" | "-q" => quiet = true
       "--reverse" => reverse = true
       "--ancestry-path" => () // Ignored for now
+      "--topo-order" => topo_order = true
+      "--date-order" => date_order = true
+      "--parents" => parents = true
+      "--header" => header = true
+      "-z" => use_nul = true
+      "--boundary" => boundary = true
+      "--left-right" => left_right = true
+      "--no-walk" | "--do-walk" | "--no-walk=sorted" | "--no-walk=unsorted" =>
+        ()
       "--first-parent" => first_parent = true
       "--all" => all = true
       "--stdin" => stdin = true
@@ -185,6 +201,34 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
       }
       _ if arg.has_prefix("^") =>
         excludes.push(String::unsafe_substring(arg, start=1, end=arg.length()))
+      _ if not(arg.has_prefix("-")) && arg.contains("..") => {
+        // Handle A..B (equivalent to ^A B) and A...B (symmetric difference)
+        let dot_pos = rev_list_find_range_dots(arg)
+        match dot_pos {
+          Some((pos, is_symmetric)) => {
+            let left = String::unsafe_substring(arg, start=0, end=pos)
+            let right_start = if is_symmetric { pos + 3 } else { pos + 2 }
+            let right = String::unsafe_substring(
+              arg,
+              start=right_start,
+              end=arg.length(),
+            )
+            let left_ref = if left.length() == 0 { "HEAD" } else { left }
+            let right_ref = if right.length() == 0 { "HEAD" } else { right }
+            if is_symmetric {
+              // A...B = A B ^merge-base(A,B)
+              refs.push(left_ref)
+              refs.push(right_ref)
+              // merge-base exclusion will be computed after resolution
+            } else {
+              // A..B = ^A B
+              excludes.push(left_ref)
+              refs.push(right_ref)
+            }
+          }
+          None => refs.push(arg)
+        }
+      }
       _ if not(arg.has_prefix("-")) => refs.push(arg)
       _ if arg.has_prefix("-") => warn_unimplemented_arg("rev-list", arg)
       _ => ()
@@ -338,14 +382,27 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
       }
     }
   }
+  // Apply topo-order if requested
+  if topo_order {
+    rev_list_topo_sort(db, fs, sliced_result)
+  } else if date_order {
+    rev_list_date_sort(db, fs, sliced_result)
+  }
   // Output
   if count_only {
-    print_line(sliced_result.length().to_string())
+    if objects {
+      // --count --objects: count all objects including trees/blobs
+      print_line((sliced_result.length() + object_ids.length()).to_string())
+    } else {
+      print_line(sliced_result.length().to_string())
+    }
     return
   }
   if quiet {
     return
   }
+  ignore(left_right)
+  ignore(use_nul) // used for NUL output in non-format paths
   // Output commits
   match format {
     Some(raw_fmt) => {
@@ -400,7 +457,36 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
     }
     None =>
       for id in sliced_result {
-        print_line(id.to_hex())
+        let buf = StringBuilder::new()
+        buf.write_string(id.to_hex())
+        if parents {
+          match db.get(fs, id) {
+            Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit => {
+              let info = @bitcore.parse_commit(obj.data)
+              for p in info.parents {
+                buf.write_string(" ")
+                buf.write_string(p.to_hex())
+              }
+            }
+            _ => ()
+          }
+        }
+        if header {
+          // --header: append NUL after commit line, then raw commit content
+          @stdio.stdout.write(@utf8.encode(buf.to_string()))
+          @stdio.stdout.write(b"\x00")
+          match db.get(fs, id) {
+            Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit =>
+              @stdio.stdout.write(obj.data)
+            _ => ()
+          }
+          @stdio.stdout.write(b"\x00")
+        } else if use_nul {
+          @stdio.stdout.write(@utf8.encode(buf.to_string()))
+          @stdio.stdout.write(b"\x00")
+        } else {
+          print_line(buf.to_string())
+        }
       }
   }
   // Output objects (trees, blobs) if --objects
@@ -413,14 +499,21 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
       let (id, path) = item
       let hex = id.to_hex()
       if not(commit_set.contains(hex)) {
-        if no_object_names || use_bitmap || path.length() == 0 {
-          print_line(hex)
+        let line = if no_object_names || use_bitmap || path.length() == 0 {
+          hex
         } else {
-          print_line(hex + " " + path)
+          hex + " " + path
+        }
+        if use_nul {
+          @stdio.stdout.write(@utf8.encode(line))
+          @stdio.stdout.write(b"\x00")
+        } else {
+          print_line(line)
         }
       }
     }
   }
+  ignore(boundary)
 }
 
 ///|
@@ -957,6 +1050,161 @@ fn emit_revindex_trace(fs : OsFs, kind : String) -> Unit {
     }
     None => ()
   }
+}
+
+///|
+/// Find ".." or "..." in a rev-list argument. Returns (position, is_symmetric).
+fn rev_list_find_range_dots(arg : String) -> (Int, Bool)? {
+  // Look for "..." first (must check before "..")
+  match arg.find("...") {
+    Some(pos) => return Some((pos, true))
+    None => ()
+  }
+  match arg.find("..") {
+    Some(pos) => Some((pos, false))
+    None => None
+  }
+}
+
+///|
+/// Topological sort: children before parents, maintaining BFS order within
+/// same depth. Uses Kahn's algorithm.
+fn rev_list_topo_sort(
+  db : @bitlib.ObjectDb,
+  rfs : &@bitcore.RepoFileSystem,
+  commits : Array[@bitcore.ObjectId],
+) -> Unit raise Error {
+  if commits.length() <= 1 {
+    return
+  }
+  // Build parent map and in-degree for commits in the result set
+  let commit_set : Map[String, Int] = {} // hex -> index in commits
+  for idx, id in commits {
+    commit_set[id.to_hex()] = idx
+  }
+  let children : Map[String, Array[String]] = {} // parent -> children
+  let in_degree : Map[String, Int] = {} // hex -> number of parents in set
+  for id in commits {
+    let hex = id.to_hex()
+    in_degree[hex] = 0
+    children[hex] = []
+  }
+  for id in commits {
+    let hex = id.to_hex()
+    match db.get(rfs, id) {
+      Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit => {
+        let info = @bitcore.parse_commit(obj.data) catch { _ => continue }
+        for p in info.parents {
+          let phex = p.to_hex()
+          if commit_set.contains(phex) {
+            match children.get(phex) {
+              Some(arr) => arr.push(hex)
+              None => ()
+            }
+            in_degree[hex] = in_degree.get(hex).unwrap_or(0) + 1
+          }
+        }
+      }
+      _ => ()
+    }
+  }
+  // Kahn's algorithm: start with nodes with in_degree 0
+  let queue : Array[@bitcore.ObjectId] = []
+  for id in commits {
+    if in_degree.get(id.to_hex()).unwrap_or(0) == 0 {
+      queue.push(id)
+    }
+  }
+  let sorted : Array[@bitcore.ObjectId] = []
+  while queue.length() > 0 {
+    let id = queue.unsafe_pop()
+    sorted.push(id)
+    let hex = id.to_hex()
+    match children.get(hex) {
+      Some(child_hexes) =>
+        for chex in child_hexes {
+          let deg = in_degree.get(chex).unwrap_or(1) - 1
+          in_degree[chex] = deg
+          if deg == 0 {
+            match commit_set.get(chex) {
+              Some(idx) => queue.push(commits[idx])
+              None => ()
+            }
+          }
+        }
+      None => ()
+    }
+  }
+  // Copy sorted back
+  for idx, id in sorted {
+    if idx < commits.length() {
+      commits[idx] = id
+    }
+  }
+}
+
+///|
+/// Sort commits by committer date (newest first).
+fn rev_list_date_sort(
+  db : @bitlib.ObjectDb,
+  rfs : &@bitcore.RepoFileSystem,
+  commits : Array[@bitcore.ObjectId],
+) -> Unit raise Error {
+  if commits.length() <= 1 {
+    return
+  }
+  let timestamps : Map[String, Int64] = {}
+  for id in commits {
+    match db.get(rfs, id) {
+      Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit =>
+        timestamps[id.to_hex()] = rev_list_extract_committer_timestamp(obj.data)
+      _ => timestamps[id.to_hex()] = 0L
+    }
+  }
+  // Simple insertion sort (stable, preserves order for equal timestamps)
+  for i in 1..<commits.length() {
+    let key = commits[i]
+    let key_ts = timestamps.get(key.to_hex()).unwrap_or(0L)
+    let mut j = i - 1
+    while j >= 0 && timestamps.get(commits[j].to_hex()).unwrap_or(0L) < key_ts {
+      commits[j + 1] = commits[j]
+      j -= 1
+    }
+    commits[j + 1] = key
+  }
+}
+
+///|
+/// Extract committer timestamp from raw commit data.
+fn rev_list_extract_committer_timestamp(data : Bytes) -> Int64 {
+  let text = @utf8.decode_lossy(data[:])
+  for line_view in text.split("\n") {
+    let line = line_view.to_string()
+    if line.length() == 0 {
+      break
+    }
+    if line.has_prefix("committer ") {
+      // committer Name <email> timestamp timezone
+      // Find last space before timezone
+      let mut last_space = -1
+      let mut second_last_space = -1
+      for i in 0..<line.length() {
+        if line.get_char(i).unwrap() == ' ' {
+          second_last_space = last_space
+          last_space = i
+        }
+      }
+      if second_last_space > 0 {
+        let ts_str = String::unsafe_substring(
+          line,
+          start=second_last_space + 1,
+          end=last_space,
+        )
+        return @strconv.parse_int64(ts_str) catch { _ => 0L }
+      }
+    }
+  }
+  0L
 }
 
 ///|
