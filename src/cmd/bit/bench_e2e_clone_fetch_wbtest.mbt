@@ -54,15 +54,6 @@ fn e2e_cleanup_tree(fs : OsFs, path : String) -> Unit {
 }
 
 ///|
-fn e2e_ensure_dir(path : String) -> Unit {
-  if not(@fs.path_exists(path)) {
-    @fs.create_dir(path) catch {
-      _ => ()
-    }
-  }
-}
-
-///|
 fn e2e_reset_git_env() -> Unit {
   @sys.unset_env_var("GIT_DIR")
   @sys.unset_env_var("GIT_WORK_TREE")
@@ -99,7 +90,7 @@ fn e2e_seed_repo_files(
 ) -> Unit {
   for d in 0..<dir_count {
     let dir = repo_root + "/dir_\{d}"
-    e2e_ensure_dir(dir)
+    ensure_bench_dir(dir)
     for i in 0..<files_per_dir {
       @fs.write_string_to_file(
         dir + "/file_\{i}.txt",
@@ -115,8 +106,8 @@ fn e2e_seed_repo_files(
 fn ensure_clone_source_repo_for_e2e_bench() -> Unit {
   let fs = OsFs::new()
   e2e_cleanup_tree(fs, bench_e2e_clone_source)
-  e2e_ensure_dir(bench_e2e_root)
-  e2e_ensure_dir(bench_e2e_clone_source)
+  ensure_bench_dir(bench_e2e_root)
+  ensure_bench_dir(bench_e2e_clone_source)
   ignore(try? @bitrepo.init_repo(fs, bench_e2e_clone_source))
   e2e_seed_repo_files(bench_e2e_clone_source, 30, 20)
   e2e_commit_all(fs, bench_e2e_clone_source, "bench clone seed")
@@ -127,8 +118,8 @@ fn ensure_fetch_repos_for_e2e_bench() -> Unit {
   let fs = OsFs::new()
   e2e_cleanup_tree(fs, bench_e2e_fetch_source)
   e2e_cleanup_tree(fs, bench_e2e_fetch_target)
-  e2e_ensure_dir(bench_e2e_root)
-  e2e_ensure_dir(bench_e2e_fetch_source)
+  ensure_bench_dir(bench_e2e_root)
+  ensure_bench_dir(bench_e2e_fetch_source)
   ignore(try? @bitrepo.init_repo(fs, bench_e2e_fetch_source))
   e2e_seed_repo_files(bench_e2e_fetch_source, 20, 15)
   e2e_commit_all(fs, bench_e2e_fetch_source, "bench fetch seed")
@@ -143,7 +134,7 @@ fn ensure_fetch_repos_for_e2e_bench() -> Unit {
 ///|
 fn append_fetch_update_commit_for_e2e_bench(step : Int) -> Unit {
   let fs = OsFs::new()
-  e2e_ensure_dir(bench_e2e_fetch_updates_dir)
+  ensure_bench_dir(bench_e2e_fetch_updates_dir)
   @fs.write_string_to_file(
     bench_e2e_fetch_updates_dir + "/tick.txt",
     "step=\{step} ts=\{get_current_timestamp().to_string()}\n",

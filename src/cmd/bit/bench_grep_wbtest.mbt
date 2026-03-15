@@ -18,15 +18,6 @@ let bench_grep_large : String = bench_grep_root + "/large"
 let bench_grep_token : String = "BENCH_RARE_TOKEN"
 
 ///|
-fn bench_grep_ensure_dir(path : String) -> Unit {
-  if not(@fs.path_exists(path)) {
-    @fs.create_dir(path) catch {
-      _ => ()
-    }
-  }
-}
-
-///|
 fn bench_grep_cleanup_tree(fs : OsFs, path : String) -> Unit {
   if fs.is_file(path) {
     fs.remove_file(path) catch {
@@ -47,17 +38,6 @@ fn bench_grep_cleanup_tree(fs : OsFs, path : String) -> Unit {
   fs.remove_dir(path) catch {
     _ => ()
   }
-}
-
-///|
-fn bench_grep_reset_env() -> Unit {
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-  @sys.unset_env_var("GIT_SHIM_CWD")
-  @sys.unset_env_var("GIT_SHIM_PWD")
-  @sys.unset_env_var("GIT_SHIM_EXPLICIT_GIT_DIR")
-  @sys.unset_env_var("GIT_CONFIG_OVERRIDES")
-  @sys.unset_env_var("BIT_PROFILE")
 }
 
 ///|
@@ -97,14 +77,14 @@ fn bench_grep_ensure_repo(
   }
   bench_grep_init_probe()
   let fs = OsFs::new()
-  bench_grep_ensure_dir(bench_grep_root)
+  ensure_bench_dir(bench_grep_root)
   bench_grep_cleanup_tree(fs, repo_root)
-  bench_grep_ensure_dir(repo_root)
+  ensure_bench_dir(repo_root)
   ignore(try? @bitrepo.init_repo(fs, repo_root))
   let mut file_idx = 0
   for dir_idx in 0..<dir_count {
     let dir = repo_root + "/dir_\{dir_idx}"
-    bench_grep_ensure_dir(dir)
+    ensure_bench_dir(dir)
     for item_idx in 0..<files_per_dir {
       let path = dir + "/file_\{item_idx}.txt"
       @fs.write_string_to_file(
@@ -132,7 +112,7 @@ fn bench_grep_ensure_repo(
 ///|
 fn bench_grep_run(repo_root : String, args : Array[String]) -> Int {
   bench_grep_init_probe()
-  bench_grep_reset_env()
+  bench_reset_env()
   bench_stdout_suppress()
   @async.run_async_main(async fn() {
     run_main_for_args(["bit", "-C", repo_root] + args)

@@ -7,36 +7,33 @@
 let bench_fsck_root : String = "/tmp/bit_bench_fsck_v1"
 
 ///|
-fn bench_fsck_ensure_dir(path : String) -> Unit {
-  if not(@fs.path_exists(path)) {
-    @fs.create_dir(path) catch { _ => () }
-  }
-}
-
-///|
 fn bench_fsck_create_repo(
   repo_path : String,
   num_commits : Int,
   files_per_commit : Int,
 ) -> Unit {
-  bench_fsck_ensure_dir(repo_path)
+  ensure_bench_dir(repo_path)
   let fs = OsFs::new()
   ignore(try? @bitrepo.init_repo(fs, repo_path))
   for commit_idx in 0..<num_commits {
     let dir = repo_path + "/dir_\{commit_idx}"
-    bench_fsck_ensure_dir(dir)
+    ensure_bench_dir(dir)
     for file_idx in 0..<files_per_commit {
       @fs.write_string_to_file(
         dir + "/file_\{file_idx}.txt",
         "fsck bench content \{commit_idx}-\{file_idx}\n",
-      ) catch { _ => () }
+      ) catch {
+        _ => ()
+      }
     }
     @async.run_async_main(async fn() {
       ignore(try? @bitlib.add_paths_async(fs, fs, repo_path, ["."]))
     })
     ignore(
       try? @bitlib.commit(
-        fs, fs, repo_path,
+        fs,
+        fs,
+        repo_path,
         "commit \{commit_idx}\n",
         "Bench <bench@example.com>",
         1700000000L + commit_idx.to_int64(),
@@ -48,7 +45,7 @@ fn bench_fsck_create_repo(
 ///|
 fn bench_fsck_ensure_repos() -> Unit {
   let marker = bench_fsck_root + "/.ready"
-  bench_fsck_ensure_dir(bench_fsck_root)
+  ensure_bench_dir(bench_fsck_root)
   if @fs.path_exists(marker) {
     return
   }
@@ -59,22 +56,24 @@ fn bench_fsck_ensure_repos() -> Unit {
   // Packed: same as medium but repacked
   bench_fsck_create_repo(bench_fsck_root + "/packed", 20, 20)
   @async.run_async_main(async fn() {
-    run_main_for_args(["bit", "-C", bench_fsck_root + "/packed", "repack", "-a", "-d"])
+    run_main_for_args([
+      "bit",
+      "-C",
+      bench_fsck_root + "/packed",
+      "repack",
+      "-a",
+      "-d",
+    ])
   })
-  @fs.write_string_to_file(marker, "ok\n") catch { _ => () }
-}
-
-///|
-fn bench_fsck_reset_env() -> Unit {
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-  @sys.unset_env_var("GIT_SHIM_CWD")
+  @fs.write_string_to_file(marker, "ok\n") catch {
+    _ => ()
+  }
 }
 
 ///|
 test "bench fsck small (70 obj, loose)" (b : @bench.T) {
   bench_fsck_ensure_repos()
-  bench_fsck_reset_env()
+  bench_reset_env()
   let repo = bench_fsck_root + "/small"
   let args = ["bit", "-C", repo, "fsck", "--no-dangling"]
   b.bench(fn() {
@@ -88,7 +87,7 @@ test "bench fsck small (70 obj, loose)" (b : @bench.T) {
 ///|
 test "bench fsck medium (460 obj, loose)" (b : @bench.T) {
   bench_fsck_ensure_repos()
-  bench_fsck_reset_env()
+  bench_reset_env()
   let repo = bench_fsck_root + "/medium"
   let args = ["bit", "-C", repo, "fsck", "--no-dangling"]
   b.bench(fn() {
@@ -102,7 +101,7 @@ test "bench fsck medium (460 obj, loose)" (b : @bench.T) {
 ///|
 test "bench fsck medium (460 obj, packed)" (b : @bench.T) {
   bench_fsck_ensure_repos()
-  bench_fsck_reset_env()
+  bench_reset_env()
   let repo = bench_fsck_root + "/packed"
   let args = ["bit", "-C", repo, "fsck", "--no-dangling"]
   b.bench(fn() {
@@ -116,7 +115,7 @@ test "bench fsck medium (460 obj, packed)" (b : @bench.T) {
 ///|
 test "bench fsck connectivity-only medium" (b : @bench.T) {
   bench_fsck_ensure_repos()
-  bench_fsck_reset_env()
+  bench_reset_env()
   let repo = bench_fsck_root + "/medium"
   let args = ["bit", "-C", repo, "fsck", "--connectivity-only", "--no-dangling"]
   b.bench(fn() {

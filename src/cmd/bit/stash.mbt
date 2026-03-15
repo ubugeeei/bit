@@ -73,59 +73,31 @@ async fn handle_stash(args : Array[String]) -> Unit raise Error {
     }
     "show" => {
       let index = parse_stash_index(rest)
-      let entries = @bitlib.stash_list(fs, git_dir)
-      if index >= entries.length() {
-        raise @bitcore.GitError::InvalidObject(
-          "No stash entry at index \{index}",
-        )
+      let (stash_info, db) = stash_load_commit(fs, git_dir, index)
+      let parent_id = stash_info.parents[0]
+      let parent_obj = db.get(fs, parent_id) catch { _ => None }
+      let parent_tree = match parent_obj {
+        Some(po) => @bitcore.parse_commit(po.data).tree
+        None =>
+          raise @bitcore.GitError::InvalidObject("Cannot read stash parent")
       }
-      let stash_id = entries[index].id
-      // Stash commit's parent is the original HEAD
-      let db = @bitlib.ObjectDb::load(fs, git_dir)
-      let stash_obj = db.get(fs, stash_id) catch {
-        _ => raise @bitcore.GitError::InvalidObject("Cannot read stash commit")
-      }
-      match stash_obj {
-        None => raise @bitcore.GitError::InvalidObject("Stash commit not found")
-        Some(obj) => {
-          let info = @bitcore.parse_commit(obj.data)
-          if info.parents.length() == 0 {
-            raise @bitcore.GitError::InvalidObject("Stash commit has no parent")
-          }
-          let parent_id = info.parents[0]
-          // Get trees for both commits
-          let parent_obj = db.get(fs, parent_id) catch { _ => None }
-          let parent_tree = match parent_obj {
-            Some(po) => @bitcore.parse_commit(po.data).tree
-            None =>
-              raise @bitcore.GitError::InvalidObject("Cannot read stash parent")
-          }
-          let stash_tree = info.tree
-          // Diff the trees
-          let parent_files = @bitlib.collect_tree_files(db, fs, parent_tree)
-          let stash_files = @bitlib.collect_tree_files(db, fs, stash_tree)
-          // Check if --stat or -p was requested
-          let mut stat_mode = true
-          for arg in rest {
-            if arg == "-p" || arg == "--patch" || arg == "-u" {
-              stat_mode = false
-            }
-          }
-          if stat_mode {
-            // --stat output (default)
-            stash_show_stat(parent_files, stash_files)
-          } else {
-            // -p output: unified diff
-            stash_show_patch(db, fs, parent_files, stash_files)
-          }
+      let parent_files = @bitlib.collect_tree_files(db, fs, parent_tree)
+      let stash_files = @bitlib.collect_tree_files(db, fs, stash_info.tree)
+      // Check if --stat or -p was requested
+      let mut stat_mode = true
+      for arg in rest {
+        if arg == "-p" || arg == "--patch" || arg == "-u" {
+          stat_mode = false
         }
       }
+      if stat_mode {
+        stash_show_stat(parent_files, stash_files)
+      } else {
+        stash_show_patch(db, fs, parent_files, stash_files)
+      }
     }
-    "create" | "store" =>
-      // create/store are low-level plumbing - warn and return
-      warn_unimplemented_arg("stash", subcmd)
+    "create" | "store" => warn_unimplemented_arg("stash", subcmd)
     "branch" => {
-      // stash branch <branchname> [<stash>]
       if rest.length() == 0 {
         eprint_line("usage: git stash branch <branchname> [<stash>]")
         @sys.exit(1)
@@ -136,48 +108,28 @@ async fn handle_stash(args : Array[String]) -> Unit raise Error {
       } else {
         0
       }
-      let entries = @bitlib.stash_list(fs, git_dir)
-      if index >= entries.length() {
-        raise @bitcore.GitError::InvalidObject(
-          "No stash entry at index \{index}",
+      let (stash_info, _db) = stash_load_commit(fs, git_dir, index)
+      if stash_info.parents.length() > 0 {
+        let parent_id = stash_info.parents[0]
+        let ref_path = git_dir + "/refs/heads/" + branch_name
+        @fs.write_string_to_file(ref_path, parent_id.to_hex() + "\n")
+        let head_path = git_dir + "/HEAD"
+        @fs.write_string_to_file(
+          head_path,
+          "ref: refs/heads/" + branch_name + "\n",
         )
-      }
-      let stash_id = entries[index].id
-      let db = @bitlib.ObjectDb::load(fs, git_dir)
-      let stash_obj = db.get(fs, stash_id) catch { _ => None }
-      match stash_obj {
-        Some(obj) => {
-          let info = @bitcore.parse_commit(obj.data)
-          if info.parents.length() > 0 {
-            let parent_id = info.parents[0]
-            // Create branch at the parent commit
-            let ref_path = git_dir + "/refs/heads/" + branch_name
-            @fs.write_string_to_file(ref_path, parent_id.to_hex() + "\n")
-            // Checkout the branch
-            let head_path = git_dir + "/HEAD"
-            @fs.write_string_to_file(
-              head_path,
-              "ref: refs/heads/" + branch_name + "\n",
-            )
-            // Apply and drop stash
-            @bitlib.stash_apply(fs, fs, root, index, true)
-            print_line(
-              "Switched to a new branch '\{branch_name}' and applied stash@{\{index}}",
-            )
-          }
-        }
-        None => raise @bitcore.GitError::InvalidObject("Stash commit not found")
+        @bitlib.stash_apply(fs, fs, root, index, true)
+        print_line(
+          "Switched to a new branch '\{branch_name}' and applied stash@{\{index}}",
+        )
       }
     }
     "clear" => {
-      // Remove all stash entries
-      let stash_ref = git_dir + "/refs/stash"
-      let reflog_path = git_dir + "/logs/refs/stash"
-      if fs.is_file(stash_ref) {
-        fs.remove_file(stash_ref)
+      fs.remove_file(git_dir + "/refs/stash") catch {
+        _ => ()
       }
-      if fs.is_file(reflog_path) {
-        fs.remove_file(reflog_path)
+      fs.remove_file(git_dir + "/logs/refs/stash") catch {
+        _ => ()
       }
     }
     _ =>
@@ -190,7 +142,6 @@ async fn handle_stash(args : Array[String]) -> Unit raise Error {
 ///|
 fn parse_stash_index(args : Array[String]) -> Int {
   for arg in args {
-    // Parse stash@{N} or just a number
     if arg.has_prefix("stash@{") && arg.has_suffix("}") {
       let num_str = String::unsafe_substring(arg, start=7, end=arg.length() - 1)
       let n = @strconv.parse_int(num_str) catch { _ => continue }
@@ -199,7 +150,56 @@ fn parse_stash_index(args : Array[String]) -> Int {
     let n = @strconv.parse_int(arg) catch { _ => continue }
     return n
   }
-  0 // Default to first stash entry
+  0
+}
+
+///|
+/// Load stash commit info and ObjectDb. Shared by "show" and "branch".
+fn stash_load_commit(
+  fs : OsFs,
+  git_dir : String,
+  index : Int,
+) -> (@bitcore.CommitInfo, @bitlib.ObjectDb) raise Error {
+  let entries = @bitlib.stash_list(fs, git_dir)
+  if index >= entries.length() {
+    raise @bitcore.GitError::InvalidObject("No stash entry at index \{index}")
+  }
+  let stash_id = entries[index].id
+  let db = @bitlib.ObjectDb::load_lazy(fs, git_dir)
+  let stash_obj = db.get(fs, stash_id) catch {
+    _ => raise @bitcore.GitError::InvalidObject("Cannot read stash commit")
+  }
+  match stash_obj {
+    None => raise @bitcore.GitError::InvalidObject("Stash commit not found")
+    Some(obj) => {
+      let info = @bitcore.parse_commit(obj.data)
+      if info.parents.length() == 0 {
+        raise @bitcore.GitError::InvalidObject("Stash commit has no parent")
+      }
+      (info, db)
+    }
+  }
+}
+
+///|
+/// Collect sorted union of paths from two tree file maps.
+fn stash_collect_paths(
+  parent_files : Map[String, @bitlib.TreeFileEntry],
+  stash_files : Map[String, @bitlib.TreeFileEntry],
+) -> Array[String] {
+  let all_paths : Map[String, Bool] = {}
+  for key, _ in parent_files {
+    all_paths[key] = true
+  }
+  for key, _ in stash_files {
+    all_paths[key] = true
+  }
+  let paths : Array[String] = []
+  for key, _ in all_paths {
+    paths.push(key)
+  }
+  paths.sort()
+  paths
 }
 
 ///|
@@ -210,16 +210,7 @@ async fn stash_show_stat(
   let mut changed = 0
   let mut insertions = 0
   let mut deletions = 0
-  // Collect all paths
-  let all_paths : Map[String, Bool] = {}
-  for item in parent_files.to_array() {
-    all_paths[item.0] = true
-  }
-  for item in stash_files.to_array() {
-    all_paths[item.0] = true
-  }
-  let paths = all_paths.to_array().map(fn(item) { item.0 })
-  paths.sort()
+  let paths = stash_collect_paths(parent_files, stash_files)
   for path in paths {
     let in_parent = parent_files.contains(path)
     let in_stash = stash_files.contains(path)
@@ -228,7 +219,6 @@ async fn stash_show_stat(
       let s = stash_files[path]
       if p.id.to_hex() != s.id.to_hex() {
         changed += 1
-        // Approximate: count as 1 insertion + 1 deletion per changed file
         insertions += 1
         deletions += 1
         print_line(" \{path} | 2 +-")
@@ -258,15 +248,7 @@ async fn stash_show_patch(
   parent_files : Map[String, @bitlib.TreeFileEntry],
   stash_files : Map[String, @bitlib.TreeFileEntry],
 ) -> Unit {
-  let all_paths : Map[String, Bool] = {}
-  for item in parent_files.to_array() {
-    all_paths[item.0] = true
-  }
-  for item in stash_files.to_array() {
-    all_paths[item.0] = true
-  }
-  let paths = all_paths.to_array().map(fn(item) { item.0 })
-  paths.sort()
+  let paths = stash_collect_paths(parent_files, stash_files)
   for path in paths {
     let in_parent = parent_files.contains(path)
     let in_stash = stash_files.contains(path)
@@ -276,14 +258,12 @@ async fn stash_show_patch(
       if p.id.to_hex() == s.id.to_hex() {
         continue
       }
-      // Show diff header
       print_line("diff --git a/\{path} b/\{path}")
       let p_short = p.id.to_hex()[:7].to_string()
       let s_short = s.id.to_hex()[:7].to_string()
       print_line("index \{p_short}..\{s_short} \{stash_mode_str(s.mode)}")
       print_line("--- a/\{path}")
       print_line("+++ b/\{path}")
-      // Get file contents and diff
       let old_content = stash_read_blob(db, fs, p.id)
       let new_content = stash_read_blob(db, fs, s.id)
       stash_print_unified_diff(old_content, new_content)
@@ -326,7 +306,6 @@ fn stash_read_blob(
       for line_view in text.split("\n") {
         lines.push(line_view.to_string())
       }
-      // Remove trailing empty line from split
       if lines.length() > 0 && lines[lines.length() - 1] == "" {
         ignore(lines.pop())
       }
@@ -349,8 +328,6 @@ async fn stash_print_unified_diff(
   old_lines : Array[String],
   new_lines : Array[String],
 ) -> Unit {
-  // Simple diff: show all old as -, all new as +
-  // A proper implementation would use LCS, but this is sufficient for basic output
   if old_lines.length() == 0 && new_lines.length() == 0 {
     return
   }

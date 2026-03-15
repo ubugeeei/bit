@@ -26,6 +26,13 @@ fn ensure_bench_dir(path : String) -> Unit {
 }
 
 ///|
+fn bench_reset_env() -> Unit {
+  @sys.unset_env_var("GIT_DIR")
+  @sys.unset_env_var("GIT_WORK_TREE")
+  @sys.unset_env_var("GIT_SHIM_CWD")
+}
+
+///|
 fn ensure_status_bench_repo() -> Unit {
   let marker = bench_status_root_base + "/.bench_ready"
   if @fs.path_exists(marker) {

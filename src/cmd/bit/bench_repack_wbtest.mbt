@@ -7,27 +7,18 @@
 let bench_repack_root : String = "/tmp/bit_bench_repack_v2"
 
 ///|
-fn bench_repack_ensure_dir(path : String) -> Unit {
-  if not(@fs.path_exists(path)) {
-    @fs.create_dir(path) catch {
-      _ => ()
-    }
-  }
-}
-
-///|
 fn bench_repack_create_repo(
   repo_path : String,
   num_commits : Int,
   files_per_commit : Int,
 ) -> Unit {
-  bench_repack_ensure_dir(repo_path)
+  ensure_bench_dir(repo_path)
   let fs = OsFs::new()
   ignore(try? @bitrepo.init_repo(fs, repo_path))
   for commit_idx in 0..<num_commits {
     for file_idx in 0..<files_per_commit {
       let dir = repo_path + "/dir_\{commit_idx}"
-      bench_repack_ensure_dir(dir)
+      ensure_bench_dir(dir)
       @fs.write_string_to_file(
         repo_path + "/dir_\{commit_idx}/file_\{file_idx}.txt",
         "content \{commit_idx}-\{file_idx} " + "x".repeat(100) + "\n",
@@ -57,7 +48,7 @@ fn bench_repack_create_repo(
 ///|
 fn bench_repack_ensure_repos() -> Unit {
   let marker = bench_repack_root + "/.ready"
-  bench_repack_ensure_dir(bench_repack_root)
+  ensure_bench_dir(bench_repack_root)
   if @fs.path_exists(marker) {
     return
   }
@@ -71,16 +62,9 @@ fn bench_repack_ensure_repos() -> Unit {
 }
 
 ///|
-fn bench_repack_reset_env() -> Unit {
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-  @sys.unset_env_var("GIT_SHIM_CWD")
-}
-
-///|
 test "bench repack small (115 obj)" (b : @bench.T) {
   bench_repack_ensure_repos()
-  bench_repack_reset_env()
+  bench_reset_env()
   let repo = bench_repack_root + "/small"
   let args = ["bit", "-C", repo, "repack", "-a", "-d"]
   b.bench(fn() {
@@ -94,7 +78,7 @@ test "bench repack small (115 obj)" (b : @bench.T) {
 ///|
 test "bench repack large (560 obj)" (b : @bench.T) {
   bench_repack_ensure_repos()
-  bench_repack_reset_env()
+  bench_reset_env()
   let repo = bench_repack_root + "/large"
   let args = ["bit", "-C", repo, "repack", "-a", "-d"]
   b.bench(fn() {

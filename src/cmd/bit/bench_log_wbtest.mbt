@@ -19,15 +19,6 @@ let bench_log_medium : String = bench_log_root + "/medium"
 let bench_log_large : String = bench_log_root + "/large"
 
 ///|
-fn bench_log_ensure_dir(path : String) -> Unit {
-  if not(@fs.path_exists(path)) {
-    @fs.create_dir(path) catch {
-      _ => ()
-    }
-  }
-}
-
-///|
 fn bench_log_cleanup_tree(fs : OsFs, path : String) -> Unit {
   if fs.is_file(path) {
     fs.remove_file(path) catch {
@@ -51,17 +42,6 @@ fn bench_log_cleanup_tree(fs : OsFs, path : String) -> Unit {
 }
 
 ///|
-fn bench_log_reset_env() -> Unit {
-  @sys.unset_env_var("GIT_DIR")
-  @sys.unset_env_var("GIT_WORK_TREE")
-  @sys.unset_env_var("GIT_SHIM_CWD")
-  @sys.unset_env_var("GIT_SHIM_PWD")
-  @sys.unset_env_var("GIT_SHIM_EXPLICIT_GIT_DIR")
-  @sys.unset_env_var("GIT_CONFIG_OVERRIDES")
-  @sys.unset_env_var("BIT_PROFILE")
-}
-
-///|
 fn bench_log_init_probe() -> Unit {
   @bitnative.init_native_io()
 }
@@ -78,9 +58,9 @@ fn bench_log_ensure_repo(
   }
   bench_log_init_probe()
   let fs = OsFs::new()
-  bench_log_ensure_dir(bench_log_root)
+  ensure_bench_dir(bench_log_root)
   bench_log_cleanup_tree(fs, repo_root)
-  bench_log_ensure_dir(repo_root)
+  ensure_bench_dir(repo_root)
   ignore(try? @bitrepo.init_repo(fs, repo_root))
   // Create initial files
   for i in 0..<file_count {
@@ -128,7 +108,7 @@ fn bench_log_ensure_repo(
 ///|
 fn bench_log_run(repo_root : String, args : Array[String]) -> Int {
   bench_log_init_probe()
-  bench_log_reset_env()
+  bench_reset_env()
   let full_args = ["bit", "-C", repo_root] + args
   bench_stdout_suppress()
   @async.run_async_main(async fn() { run_main_for_args(full_args) })
@@ -139,7 +119,7 @@ fn bench_log_run(repo_root : String, args : Array[String]) -> Int {
 ///|
 test "bench log oneline -n 10 (shallow)" (b : @bench.T) {
   bench_log_ensure_repo(bench_log_large, 10, 1000)
-  bench_log_reset_env()
+  bench_reset_env()
   b.bench(fn() {
     b.keep(bench_log_run(bench_log_large, ["log", "--oneline", "-n", "10"]))
   })
@@ -148,7 +128,7 @@ test "bench log oneline -n 10 (shallow)" (b : @bench.T) {
 ///|
 test "bench log oneline -n 50" (b : @bench.T) {
   bench_log_ensure_repo(bench_log_small, 10, 50)
-  bench_log_reset_env()
+  bench_reset_env()
   b.bench(fn() {
     b.keep(bench_log_run(bench_log_small, ["log", "--oneline", "-n", "50"]))
   })
@@ -157,7 +137,7 @@ test "bench log oneline -n 50" (b : @bench.T) {
 ///|
 test "bench log oneline -n 200" (b : @bench.T) {
   bench_log_ensure_repo(bench_log_medium, 10, 200)
-  bench_log_reset_env()
+  bench_reset_env()
   b.bench(fn() {
     b.keep(bench_log_run(bench_log_medium, ["log", "--oneline", "-n", "200"]))
   })
@@ -166,7 +146,7 @@ test "bench log oneline -n 200" (b : @bench.T) {
 ///|
 test "bench log oneline -n 1000" (b : @bench.T) {
   bench_log_ensure_repo(bench_log_large, 10, 1000)
-  bench_log_reset_env()
+  bench_reset_env()
   b.bench(fn() {
     b.keep(bench_log_run(bench_log_large, ["log", "--oneline", "-n", "1000"]))
   })
@@ -175,14 +155,14 @@ test "bench log oneline -n 1000" (b : @bench.T) {
 ///|
 test "bench log full -n 50" (b : @bench.T) {
   bench_log_ensure_repo(bench_log_small, 10, 50)
-  bench_log_reset_env()
+  bench_reset_env()
   b.bench(fn() { b.keep(bench_log_run(bench_log_small, ["log", "-n", "50"])) })
 }
 
 ///|
 test "bench log stat -n 50" (b : @bench.T) {
   bench_log_ensure_repo(bench_log_small, 10, 50)
-  bench_log_reset_env()
+  bench_reset_env()
   b.bench(fn() {
     b.keep(bench_log_run(bench_log_small, ["log", "--stat", "-n", "50"]))
   })
