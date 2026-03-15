@@ -830,19 +830,12 @@ async fn rev_list_parse_int_or_die(value : String) -> Int raise Error {
 
 ///|
 fn rev_list_normalize_skip(skip_count : Int) -> Int {
-  if skip_count < 0 {
-    0
-  } else {
-    skip_count
-  }
+  @bitlib.rev_list_normalize_skip(skip_count)
 }
 
 ///|
 fn rev_list_normalize_max_count(max_count : Int?) -> Int? {
-  match max_count {
-    Some(count) if count >= 0 => Some(count)
-    _ => None
-  }
+  @bitlib.rev_list_normalize_max_count(max_count)
 }
 
 ///|
@@ -851,15 +844,7 @@ fn rev_list_window(
   skip_count : Int,
   max_count : Int?,
 ) -> (Int, Int) {
-  let normalized_skip = rev_list_normalize_skip(skip_count)
-  let start = if normalized_skip > length { length } else { normalized_skip }
-  match rev_list_normalize_max_count(max_count) {
-    Some(count) => {
-      let end = start + count
-      (start, if end > length { length } else { end })
-    }
-    None => (start, length)
-  }
+  @bitlib.rev_list_window(length, skip_count, max_count)
 }
 
 ///|
@@ -1326,15 +1311,7 @@ fn emit_revindex_trace(fs : OsFs, kind : String) -> Unit {
 ///|
 /// Find ".." or "..." in a rev-list argument. Returns (position, is_symmetric).
 fn rev_list_find_range_dots(arg : String) -> (Int, Bool)? {
-  // Look for "..." first (must check before "..")
-  match arg.find("...") {
-    Some(pos) => return Some((pos, true))
-    None => ()
-  }
-  match arg.find("..") {
-    Some(pos) => Some((pos, false))
-    None => None
-  }
+  @bitlib.rev_list_find_range_dots(arg)
 }
 
 ///|
@@ -1767,50 +1744,7 @@ fn rev_list_add_glob_refs(
 ///|
 /// Simple glob matching with * wildcard.
 fn rev_list_glob_match(pattern : String, text : String) -> Bool {
-  let p_chars : Array[Char] = []
-  let t_chars : Array[Char] = []
-  for ch in pattern {
-    p_chars.push(ch)
-  }
-  for ch in text {
-    t_chars.push(ch)
-  }
-  let mut pi = 0
-  let mut ti = 0
-  let mut star_pi = -1
-  let mut star_ti = -1
-  while ti < t_chars.length() {
-    if pi < p_chars.length() && p_chars[pi] == '?' {
-      // ? matches exactly one character (but not /)
-      if t_chars[ti] != '/' {
-        pi += 1
-        ti += 1
-      } else if star_pi >= 0 {
-        pi = star_pi + 1
-        star_ti += 1
-        ti = star_ti
-      } else {
-        return false
-      }
-    } else if pi < p_chars.length() && p_chars[pi] == t_chars[ti] {
-      pi += 1
-      ti += 1
-    } else if pi < p_chars.length() && p_chars[pi] == '*' {
-      star_pi = pi
-      star_ti = ti
-      pi += 1
-    } else if star_pi >= 0 {
-      pi = star_pi + 1
-      star_ti += 1
-      ti = star_ti
-    } else {
-      return false
-    }
-  }
-  while pi < p_chars.length() && p_chars[pi] == '*' {
-    pi += 1
-  }
-  pi >= p_chars.length()
+  @bitlib.rev_list_glob_match(pattern, text)
 }
 
 ///|

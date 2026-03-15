@@ -187,19 +187,7 @@ fn stash_collect_paths(
   parent_files : Map[String, @bitlib.TreeFileEntry],
   stash_files : Map[String, @bitlib.TreeFileEntry],
 ) -> Array[String] {
-  let all_paths : Map[String, Bool] = {}
-  for key, _ in parent_files {
-    all_paths[key] = true
-  }
-  for key, _ in stash_files {
-    all_paths[key] = true
-  }
-  let paths : Array[String] = []
-  for key, _ in all_paths {
-    paths.push(key)
-  }
-  paths.sort()
-  paths
+  @bitlib.stash_collect_paths(parent_files, stash_files)
 }
 
 ///|
@@ -316,11 +304,7 @@ fn stash_read_blob(
 
 ///|
 fn stash_mode_str(mode : Int) -> String {
-  if mode == 0o100755 {
-    "100755"
-  } else {
-    "100644"
-  }
+  @bitlib.stash_mode_str(mode)
 }
 
 ///|

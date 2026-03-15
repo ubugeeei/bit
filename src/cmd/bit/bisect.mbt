@@ -230,7 +230,7 @@ fn bisect_compute_next(
     return Waiting("status: waiting for good commit(s), bad commit known")
   }
   let db = @bitlib.ObjectDb::load(rfs, git_dir)
-  let candidates = bisect_get_candidates(
+  let candidates = @bitlib.bisect_get_candidates(
     db, rfs, bad_id, good_commits, skip_commits,
   )
   if candidates.length() == 0 {
@@ -241,7 +241,7 @@ fn bisect_compute_next(
   let mid_hex = mid_id.to_hex()
   let commit_msg = bisect_first_line_of_commit(db, rfs, mid_id)
   let remaining = candidates.length()
-  let steps = bisect_steps(remaining)
+  let steps = @bitlib.bisect_steps(remaining)
   Next(mid_hex, commit_msg, remaining, steps)
 }
 
@@ -283,93 +283,6 @@ async fn bisect_apply_next_result(
   }
 }
 
-///|
-fn bisect_steps(n : Int) -> Int {
-  if n <= 1 {
-    return 0
-  }
-  let mut steps = 0
-  let mut val = n
-  while val > 1 {
-    val = val / 2
-    steps += 1
-  }
-  steps
-}
-
-///|
-fn bisect_get_candidates(
-  db : @bitlib.ObjectDb,
-  rfs : &@bitcore.RepoFileSystem,
-  bad : @bitcore.ObjectId,
-  goods : Array[@bitcore.ObjectId],
-  skips : Array[@bitcore.ObjectId],
-) -> Array[@bitcore.ObjectId] raise Error {
-  let good_set : Map[String, Bool] = {}
-  for g in goods {
-    mark_ancestors(db, rfs, g, good_set)
-  }
-  // Pre-build skip set for O(1) lookup
-  let skip_set : Map[String, Bool] = {}
-  for s in skips {
-    skip_set[s.to_hex()] = true
-  }
-  let candidates : Array[@bitcore.ObjectId] = []
-  let visited : Map[String, Bool] = {}
-  let queue : Array[@bitcore.ObjectId] = [bad]
-  while queue.length() > 0 {
-    let current = queue.pop()
-    guard current is Some(cid) else { break }
-    let hex = cid.to_hex()
-    if visited.contains(hex) || good_set.contains(hex) {
-      continue
-    }
-    visited[hex] = true
-    if not(skip_set.contains(hex)) && cid != bad {
-      candidates.push(cid)
-    }
-    let obj = db.get(rfs, cid)
-    match obj {
-      Some(o) => {
-        let info = @bitcore.parse_commit(o.data)
-        for p in info.parents {
-          queue.push(p)
-        }
-      }
-      None => ()
-    }
-  }
-  candidates
-}
-
-///|
-fn mark_ancestors(
-  db : @bitlib.ObjectDb,
-  rfs : &@bitcore.RepoFileSystem,
-  start : @bitcore.ObjectId,
-  set : Map[String, Bool],
-) -> Unit {
-  let queue : Array[@bitcore.ObjectId] = [start]
-  while queue.length() > 0 {
-    let current = queue.pop()
-    guard current is Some(cid) else { break }
-    let hex = cid.to_hex()
-    if set.contains(hex) {
-      continue
-    }
-    set[hex] = true
-    let obj = db.get(rfs, cid) catch { _ => None }
-    match obj {
-      Some(o) => {
-        let info = @bitcore.parse_commit(o.data) catch { _ => continue }
-        for p in info.parents {
-          queue.push(p)
-        }
-      }
-      None => ()
-    }
-  }
-}
 
 ///|
 /// Run bisect automated search with an injectable command runner.
@@ -399,7 +312,7 @@ async fn bisect_run(
     }
     Next(_, _, _, _) => ()
   }
-  let command = bisect_shell_quote_args(args)
+  let command = @bitlib.bisect_shell_quote_args(args)
   let mut is_first_run = true
   while true {
     eprint_line("running \{command}")
@@ -759,24 +672,6 @@ fn bisect_first_line_of_commit(
   }
 }
 
-///|
-/// Shell-quote arguments for bisect run command string.
-fn bisect_shell_quote_args(args : Array[String]) -> String {
-  let parts : Array[String] = []
-  for arg in args {
-    if arg.contains(" ") ||
-      arg.contains("'") ||
-      arg.contains("\"") ||
-      arg.contains("\\") {
-      // Single-quote with escaping
-      let escaped = arg.replace(old="'", new="\\'")
-      parts.push("'" + escaped + "'")
-    } else {
-      parts.push(arg)
-    }
-  }
-  parts.join(" ")
-}
 
 ///|
 /// Resolve work root from git_dir.

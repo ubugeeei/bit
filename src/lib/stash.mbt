@@ -310,3 +310,34 @@ fn stash_drop_at(
     }
   }
 }
+
+///|
+/// Collect sorted union of paths from two tree file maps.
+pub fn stash_collect_paths(
+  parent_files : Map[String, TreeFileEntry],
+  stash_files : Map[String, TreeFileEntry],
+) -> Array[String] {
+  let all_paths : Map[String, Bool] = {}
+  for key, _ in parent_files {
+    all_paths[key] = true
+  }
+  for key, _ in stash_files {
+    all_paths[key] = true
+  }
+  let paths : Array[String] = []
+  for key, _ in all_paths {
+    paths.push(key)
+  }
+  paths.sort()
+  paths
+}
+
+///|
+/// Convert Int mode to String representation.
+pub fn stash_mode_str(mode : Int) -> String {
+  if mode == 0o100755 {
+    "100755"
+  } else {
+    "100644"
+  }
+}

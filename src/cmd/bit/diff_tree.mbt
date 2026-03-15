@@ -283,13 +283,7 @@ fn diff_tree_collect_entries(
 
 ///|
 fn diff_tree_abbrev_hex(hex : String, abbrev : Int?) -> String {
-  match abbrev {
-    None => hex
-    Some(n) => {
-      let len = if n < 4 { 4 } else if n > 40 { 40 } else { n }
-      String::unsafe_substring(hex, start=0, end=len)
-    }
-  }
+  @bitlib.diff_tree_abbrev_hex(hex, abbrev)
 }
 
 ///|
@@ -384,8 +378,5 @@ async fn diff_tree_output(
 
 ///|
 fn diff_tree_filter_matches(filter : String?, status : String) -> Bool {
-  match filter {
-    None => true
-    Some(f) => f.contains(status)
-  }
+  @bitlib.diff_tree_filter_matches(filter, status)
 }

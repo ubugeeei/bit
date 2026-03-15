@@ -218,9 +218,9 @@ async test "bisect: replay restores state from log" {
 
 ///|
 async test "bisect: shell_quote_args handles special characters" {
-  assert_eq(bisect_shell_quote_args(["echo", "hello"]), "echo hello")
+  assert_eq(@bitlib.bisect_shell_quote_args(["echo", "hello"]), "echo hello")
   assert_eq(
-    bisect_shell_quote_args(["test", "hello world"]),
+    @bitlib.bisect_shell_quote_args(["test", "hello world"]),
     "test 'hello world'",
   )
 }
