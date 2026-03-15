@@ -102,6 +102,10 @@ async fn show_help() -> Unit {
     #|   fmt-merge-msg   Produce a merge commit message
     #|   name-rev        Find symbolic names for given revs
     #|   patch-id        Compute a stable patch identifier
+    #|   check-ref-format Ensure that a reference name is well formed
+    #|   mktag           Create a validated tag object
+    #|   interpret-trailers  Add or parse trailers in commit messages
+    #|   column          Display data in columns
     #|   update-server-info  Update auxiliary info for dumb HTTP serving
     #|
     #|See 'git help <command>' for more information on a specific command.
@@ -377,6 +381,21 @@ fn show_command_help_specs() -> Array[(String, String, String)] {
     ),
     (
       "update-server-info", "git update-server-info [-f | --force]", "Update auxiliary info for dumb HTTP serving.",
+    ),
+    (
+      "check-ref-format", "git check-ref-format [--normalize] [--allow-onelevel] [--branch] <refname>",
+      "Ensure that a reference name is well formed.",
+    ),
+    (
+      "mktag", "git mktag", "Create a validated tag object.",
+    ),
+    (
+      "interpret-trailers", "git interpret-trailers [--trailer <token>[(=|:)<value>]] [<file>...]",
+      "Add or parse trailing meta-data in commit messages.",
+    ),
+    (
+      "column", "git column [--mode=<mode>] [--width=<n>] [--padding=<n>]",
+      "Display data in columns.",
     ),
     ("version", "git version", "Show version information."),
     ("pr", "bit pr <subcommand> [<args>]", "Manage pull requests."),
@@ -1213,6 +1232,10 @@ async fn dispatch_known_command(
     "commit-tree" => handle_commit_tree(rest)
     "diff-tree" => handle_diff_tree(rest)
     "mktree" => handle_mktree(rest)
+    "mktag" => handle_mktag(rest)
+    "check-ref-format" => handle_check_ref_format(rest)
+    "interpret-trailers" => handle_interpret_trailers(rest)
+    "column" => handle_column(rest)
     "request-pull" => handle_request_pull(rest)
     "send-pack" => handle_send_pack(rest)
     "range-diff" => handle_range_diff(rest)
