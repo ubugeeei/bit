@@ -116,19 +116,7 @@ fn get_all_tags(
 
 ///|
 fn parse_tag_object(data : String) -> @bitcore.ObjectId? raise Error {
-  // Tag object format:
-  // object <sha>
-  // type commit
-  // tag <name>
-  // ...
-  for line_view in data.split("\n") {
-    let line = line_view.to_string()
-    if line.has_prefix("object ") {
-      let hex = String::unsafe_substring(line, start=7, end=line.length())
-      return hex |> trim_string |> @bitcore.ObjectId::from_hex |> Some
-    }
-  }
-  None
+  @bitlib.parse_tag_object(data)
 }
 
 ///|

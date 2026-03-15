@@ -24,14 +24,21 @@ test "fsck_connectivity_check finds reachable objects" {
   let (blob_id, blob_bytes) = @bit.create_blob_string("hello\n")
   @lib.write_object_bytes(fs, git_dir, blob_id, blob_bytes)
   // Create a tree with the blob
-  let (tree_id, tree_bytes) = @bit.create_tree(
-    [@bit.TreeEntry::new("100644", "hello.txt", blob_id)],
-  )
+  let (tree_id, tree_bytes) = @bit.create_tree([
+    @bit.TreeEntry::new("100644", "hello.txt", blob_id),
+  ])
   @lib.write_object_bytes(fs, git_dir, tree_id, tree_bytes)
   // Create a root commit
   let commit = @bit.Commit::new(
-    tree_id, [], "A <a@b.c>", 1000000000L, "+0000", "A <a@b.c>",
-    1000000000L, "+0000", "test\n",
+    tree_id,
+    [],
+    "A <a@b.c>",
+    1000000000L,
+    "+0000",
+    "A <a@b.c>",
+    1000000000L,
+    "+0000",
+    "test\n",
   )
   let (commit_id, commit_bytes) = @bit.create_commit(commit)
   @lib.write_object_bytes(fs, git_dir, commit_id, commit_bytes)
@@ -117,8 +124,7 @@ test "fsck_verify_loose_hash valid" {
   assert_true(
     not(
       @lib.fsck_verify_loose_hash(
-        raw,
-        "0000000000000000000000000000000000000000",
+        raw, "0000000000000000000000000000000000000000",
       ),
     ),
   )

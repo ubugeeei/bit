@@ -283,7 +283,6 @@ async fn bisect_apply_next_result(
   }
 }
 
-
 ///|
 /// Run bisect automated search with an injectable command runner.
 /// `run_command` takes (root_dir, command_string) and returns exit code.
@@ -671,7 +670,6 @@ fn bisect_first_line_of_commit(
     None => ""
   }
 }
-
 
 ///|
 /// Resolve work root from git_dir.

@@ -836,30 +836,7 @@ async fn commit_check_message_source_conflict(
 
 ///|
 fn commit_strip_message(msg : String) -> String {
-  let lines : Array[String] = []
-  for line_view in msg.split("\n") {
-    let line = line_view.to_string()
-    let trimmed = trim_string(line)
-    // Skip comment lines (lines starting with #)
-    if trimmed.has_prefix("#") {
-      continue
-    }
-    lines.push(line)
-  }
-  // Strip trailing empty lines
-  while lines.length() > 0 {
-    let last = lines[lines.length() - 1]
-    if trim_string(last).length() == 0 {
-      let _ = lines.pop()
-    } else {
-      break
-    }
-  }
-  // Strip leading empty lines
-  while lines.length() > 0 && trim_string(lines[0]).length() == 0 {
-    let _ = lines.remove(0)
-  }
-  lines.join("\n")
+  @bitlib.commit_strip_message(msg)
 }
 
 ///|
@@ -885,68 +862,12 @@ fn commit_prepare_message_for_validation(
 ///|
 fn commit_apply_signoff(msg : String) -> String {
   let committer = get_committer_string()
-  let signoff_line = "Signed-off-by: " + committer
-  // Check if signoff already present at the end
-  let lines : Array[String] = []
-  for line_view in msg.split("\n") {
-    lines.push(line_view.to_string())
-  }
-  // Strip trailing newlines for checking
-  let mut last_nonblank = lines.length() - 1
-  while last_nonblank >= 0 && trim_string(lines[last_nonblank]).length() == 0 {
-    last_nonblank -= 1
-  }
-  if last_nonblank >= 0 && trim_string(lines[last_nonblank]) == signoff_line {
-    return msg
-  }
-  // Determine if we need a blank line separator.
-  // A blank line is needed if the last non-blank line is not a trailer.
-  let need_blank = if last_nonblank >= 0 {
-    not(commit_is_trailer_line(lines[last_nonblank]))
-  } else {
-    true
-  }
-  let result = StringBuilder::new()
-  // Preserve original message
-  if msg.has_suffix("\n") {
-    result.write_string(msg)
-  } else {
-    result.write_string(msg)
-    result.write_char('\n')
-  }
-  if need_blank {
-    result.write_char('\n')
-  }
-  result.write_string(signoff_line)
-  result.write_char('\n')
-  result.to_string()
+  @bitlib.commit_apply_signoff(msg, committer~)
 }
 
 ///|
 fn commit_is_trailer_line(line : String) -> Bool {
-  let trimmed = trim_string(line)
-  // A trailer line matches "Token: Value" or "Token #Value"
-  match trimmed.find(": ") {
-    Some(idx) => {
-      // Token must be non-empty and contain only word chars and hyphens
-      let token = string_slice_to(trimmed, idx)
-      if token.length() == 0 {
-        return false
-      }
-      for c in token {
-        if not(
-            (c >= 'a' && c <= 'z') ||
-            (c >= 'A' && c <= 'Z') ||
-            (c >= '0' && c <= '9') ||
-            c == '-',
-          ) {
-          return false
-        }
-      }
-      true
-    }
-    None => false
-  }
+  @bitlib.commit_is_trailer_line(line)
 }
 
 ///|
@@ -1274,15 +1195,7 @@ fn resolve_commit_message_encoding(git_dir : String) -> String {
 
 ///|
 fn decode_commit_message_bytes(data : Bytes, encoding : String) -> String {
-  if is_iso_8859_1_encoding(encoding) {
-    let out = StringBuilder::new()
-    for b in data {
-      out.write_char(b.to_int().unsafe_to_char())
-    }
-    out.to_string()
-  } else {
-    decode_bytes(data)
-  }
+  @bitlib.decode_commit_message_bytes(data, encoding)
 }
 
 ///|

@@ -342,9 +342,15 @@ fn fsck_write_lost_found(
   let lf_dir = git_dir + "/lost-found"
   let commit_dir = lf_dir + "/commit"
   let other_dir = lf_dir + "/other"
-  ensure_dir(lf_dir) catch { _ => return }
-  ensure_dir(commit_dir) catch { _ => return }
-  ensure_dir(other_dir) catch { _ => return }
+  ensure_dir(lf_dir) catch {
+    _ => return
+  }
+  ensure_dir(commit_dir) catch {
+    _ => return
+  }
+  ensure_dir(other_dir) catch {
+    _ => return
+  }
   for hex in all_objects {
     if reachable.contains(hex) {
       continue
@@ -359,7 +365,9 @@ fn fsck_write_lost_found(
         } else {
           other_dir
         }
-        @fs.write_bytes_to_file(dir + "/" + hex, o.data) catch { _ => () }
+        @fs.write_bytes_to_file(dir + "/" + hex, o.data) catch {
+          _ => ()
+        }
       }
     }
   }

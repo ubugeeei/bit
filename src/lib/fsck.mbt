@@ -17,7 +17,7 @@ pub fn fsck_connectivity_check(
   db : ObjectDb,
   fs : &@bit.RepoFileSystem,
   tips : Array[@bit.ObjectId],
-  collect_extra~ : Bool = false,
+  collect_extra? : Bool = false,
 ) -> FsckResult raise @bit.GitError {
   let reachable : Map[String, Bool] = {}
   let missing : Map[String, Bool] = {}

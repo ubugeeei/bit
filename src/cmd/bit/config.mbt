@@ -1149,12 +1149,12 @@ fn normalize_config_args(args : Array[String]) -> Array[String] {
 /// Sentinel value for config keys with no '=' sign (value-less keys).
 /// Internal to config.mbt — external callers should not see this.
 fn config_novalue() -> String {
-  "\u0001"
+  @bitlib.config_novalue()
 }
 
 ///|
 fn is_config_novalue(s : String) -> Bool {
-  s == config_novalue()
+  @bitlib.is_config_novalue(s)
 }
 
 ///|
@@ -1246,73 +1246,12 @@ fn split_config_lines_preserve_cr(content : String) -> Array[String] {
 /// For dot notation `[section.Sub]`, the subsection is LOWERCASED (git compat).
 /// For quoted `[section "Sub"]`, the subsection is preserved as-is.
 fn parse_section_header_line(line : String) -> (String, String?, String, Bool)? {
-  if not(line.has_prefix("[")) {
-    return None
-  }
-  match line.find("]") {
-    None => None
-    Some(close_i) => {
-      let header = String::unsafe_substring(line, start=1, end=close_i)
-      let rest = trim_chars(
-        String::unsafe_substring(line, start=close_i + 1, end=line.length()),
-        " \t",
-      )
-      match header.find(" ") {
-        None =>
-          // No space: check for dot notation [section.sub]
-          match header.find(".") {
-            Some(dot_i) => {
-              let sec = String::unsafe_substring(header, start=0, end=dot_i)
-              let sub = String::unsafe_substring(
-                header,
-                start=dot_i + 1,
-                end=header.length(),
-              ).to_lower()
-              Some((sec, Some(sub), rest, true))
-            }
-            None => Some((header, None, rest, false))
-          }
-        Some(space_i) => {
-          let sec = String::unsafe_substring(header, start=0, end=space_i)
-          let raw_sub = trim_chars(
-            String::unsafe_substring(
-              header,
-              start=space_i + 1,
-              end=header.length(),
-            ),
-            " \t",
-          )
-          // Strip surrounding quotes if present
-          let sub = if raw_sub.length() >= 2 &&
-            raw_sub[0] == '"' &&
-            raw_sub[raw_sub.length() - 1] == '"' {
-            String::unsafe_substring(raw_sub, start=1, end=raw_sub.length() - 1)
-          } else {
-            raw_sub
-          }
-          Some((sec, Some(sub), rest, false))
-        }
-      }
-    }
-  }
+  @bitlib.parse_section_header_line(line)
 }
 
 ///|
 fn is_valid_section_name(name : String) -> Bool {
-  if name.length() == 0 {
-    return false
-  }
-  for c in name {
-    if not(
-        (c >= 'a' && c <= 'z') ||
-        (c >= 'A' && c <= 'Z') ||
-        (c >= '0' && c <= '9') ||
-        c == '-',
-      ) {
-      return false
-    }
-  }
-  true
+  @bitlib.is_valid_section_name(name)
 }
 
 ///|
@@ -1586,19 +1525,9 @@ fn section_matches_for_insert(
   query_subsection : String?,
   is_dot_form : Bool,
 ) -> Bool {
-  if header_section.to_lower() != query_section.to_lower() {
-    return false
-  }
-  match (header_subsection, query_subsection) {
-    (None, None) => true
-    (Some(hs), Some(qs)) =>
-      if is_dot_form {
-        hs.to_lower() == qs.to_lower()
-      } else {
-        hs == qs
-      }
-    _ => false
-  }
+  @bitlib.section_matches_for_insert(
+    header_section, header_subsection, query_section, query_subsection, is_dot_form,
+  )
 }
 
 ///|
@@ -1606,111 +1535,12 @@ fn section_matches_for_insert(
 /// Returns (section, subsection?, key_name) or None.
 /// Validates that the key name starts with an alphabetic character (git compat).
 fn parse_config_key(key : String) -> (String, String?, String)? {
-  // Reject keys containing newlines
-  if key.contains("\n") {
-    return None
-  }
-  let parts : Array[String] = []
-  for p in key.split(".") {
-    parts.push(p.to_string())
-  }
-  if parts.length() < 2 {
-    return None
-  }
-  // Reject empty section name
-  if parts[0].length() == 0 {
-    return None
-  }
-  let key_name = parts[parts.length() - 1]
-  // git rejects keys that don't start with an alphabetic character
-  if key_name.length() == 0 {
-    return None
-  }
-  let first = key_name[0]
-  if not((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z')) {
-    return None
-  }
-  if parts.length() == 2 {
-    Some((parts[0], None, key_name))
-  } else {
-    let sub : Array[String] = []
-    for i in 1..<(parts.length() - 1) {
-      sub.push(parts[i])
-    }
-    Some((parts[0], Some(sub.join(".")), key_name))
-  }
+  @bitlib.parse_config_key(key)
 }
 
 ///|
 fn find_config_key_line_from_content(content : String, key : String) -> Int? {
-  let target = parse_config_key(key)
-  guard target is Some((sec, sub, name)) else { return None }
-  let sec_l = sec.to_lower()
-  let name_l = name.to_lower()
-  let lines = split_config_lines_preserve_cr(content)
-  let mut current_section = ""
-  let mut current_subsection : String? = None
-  for i, line in lines {
-    let trimmed = trim_string(line)
-    if trimmed.length() == 0 || trimmed[0] == '#' || trimmed[0] == ';' {
-      continue
-    }
-    match parse_section_header_line(trimmed) {
-      Some((hs, hsub, rest, _)) => {
-        current_section = hs.to_lower()
-        current_subsection = hsub
-        if section_header_matches(
-            current_section, current_subsection, sec_l, sub,
-          ) &&
-          rest.length() > 0 {
-          let eq = rest.find("=")
-          let key_part = match eq {
-            Some(ei) =>
-              trim_chars(String::unsafe_substring(rest, start=0, end=ei), " \t")
-            None => trim_chars(rest, " \t")
-          }
-          if key_part.to_lower() == name_l {
-            return Some(i + 1)
-          }
-        }
-      }
-      None => {
-        if not(
-            section_header_matches(
-              current_section, current_subsection, sec_l, sub,
-            ),
-          ) {
-          continue
-        }
-        let eq = trimmed.find("=")
-        let key_part = match eq {
-          Some(ei) =>
-            trim_chars(
-              String::unsafe_substring(trimmed, start=0, end=ei),
-              " \t",
-            )
-          None => trim_chars(trimmed, " \t")
-        }
-        if key_part.to_lower() == name_l {
-          return Some(i + 1)
-        }
-      }
-    }
-  }
-  None
-}
-
-///|
-/// Join continuation lines (lines ending with unescaped backslash).
-/// Only join if the backslash is in a value context (not in a comment).
-fn preprocess_config_lines(raw_lines : Array[String]) -> Array[String] {
-  let line_info = preprocess_config_lines_with_line_numbers(raw_lines)
-  let result : Array[String] = []
-  for info in line_info {
-    let (line, _line_num) = info
-    result.push(line)
-  }
-  result
+  @bitlib.find_config_key_line_from_content(content, key)
 }
 
 ///|
@@ -1806,7 +1636,7 @@ fn ends_with_unescaped_backslash(s : String) -> Bool {
 
 ///|
 fn config_lines_from_content(content : String) -> Array[String] {
-  preprocess_config_lines(split_config_lines_preserve_cr(content))
+  @bitlib.config_lines_from_content(content)
 }
 
 ///|
@@ -2004,101 +1834,9 @@ fn get_config_value_from_content(
   value_pattern : String?,
   fixed_value : Bool,
 ) -> String? {
-  let lines = config_lines_from_content(content)
-  guard parse_config_key(key) is Some((section, subsection, name)) else {
-    return None
-  }
-  let name_l = name.to_lower()
-  let mut in_section = false
-  let mut found : String? = None
-  for line in lines {
-    let trimmed = trim_string(line)
-    if trimmed.length() == 0 || trimmed[0] == '#' || trimmed[0] == ';' {
-      continue
-    }
-    match parse_section_header_line(trimmed) {
-      Some((hs, hsub, rest, _dot_form)) => {
-        in_section = section_header_matches(hs, hsub, section, subsection)
-        // Handle inline key-value after section header
-        if in_section && rest.length() > 0 {
-          let eq_idx = rest.find("=")
-          match eq_idx {
-            Some(ei) => {
-              let key_part = trim_chars(
-                String::unsafe_substring(rest, start=0, end=ei),
-                " \t",
-              )
-              if key_part.to_lower() == name_l {
-                let val = parse_config_value(
-                  String::unsafe_substring(
-                    rest,
-                    start=ei + 1,
-                    end=rest.length(),
-                  ),
-                )
-                if matches_value_filter(val, value_pattern, fixed_value) {
-                  found = Some(val)
-                }
-              }
-            }
-            None => {
-              // Value-less inline key
-              let key_part = trim_chars(rest, " \t")
-              if key_part.to_lower() == name_l {
-                let val = config_novalue()
-                if matches_value_filter("", value_pattern, fixed_value) {
-                  found = Some(val)
-                }
-              }
-            }
-          }
-        }
-      }
-      None =>
-        if in_section {
-          let eq_idx = trimmed.find("=")
-          match eq_idx {
-            Some(i) => {
-              let key_part = trim_chars(
-                String::unsafe_substring(trimmed, start=0, end=i),
-                " \t",
-              )
-              if key_part.to_lower() == name_l {
-                let raw_val = match line.find("=") {
-                  Some(raw_i) =>
-                    String::unsafe_substring(
-                      line,
-                      start=raw_i + 1,
-                      end=line.length(),
-                    )
-                  None =>
-                    String::unsafe_substring(
-                      trimmed,
-                      start=i + 1,
-                      end=trimmed.length(),
-                    )
-                }
-                let val = parse_config_value(raw_val)
-                if matches_value_filter(val, value_pattern, fixed_value) {
-                  found = Some(val)
-                }
-              }
-            }
-            None => {
-              // Value-less key (no = sign)
-              let key_part = trim_chars(trimmed, " \t")
-              if key_part.to_lower() == name_l {
-                let val = config_novalue()
-                if matches_value_filter("", value_pattern, fixed_value) {
-                  found = Some(val)
-                }
-              }
-            }
-          }
-        }
-    }
-  }
-  found
+  @bitlib.get_config_value_from_content(
+    content, key, value_pattern, fixed_value,
+  )
 }
 
 ///|
@@ -2124,96 +1862,9 @@ fn get_all_config_values_from_content(
   value_pattern : String?,
   fixed_value : Bool,
 ) -> Array[String] {
-  let lines = config_lines_from_content(content)
-  guard parse_config_key(key) is Some((section, subsection, name)) else {
-    return []
-  }
-  let name_l = name.to_lower()
-  let mut in_section = false
-  let result : Array[String] = []
-  for line in lines {
-    let trimmed = trim_string(line)
-    if trimmed.length() == 0 || trimmed[0] == '#' || trimmed[0] == ';' {
-      continue
-    }
-    match parse_section_header_line(trimmed) {
-      Some((hs, hsub, rest, _dot_form)) => {
-        in_section = section_header_matches(hs, hsub, section, subsection)
-        if in_section && rest.length() > 0 {
-          let eq_idx = rest.find("=")
-          match eq_idx {
-            Some(ei) => {
-              let key_part = trim_chars(
-                String::unsafe_substring(rest, start=0, end=ei),
-                " \t",
-              )
-              if key_part.to_lower() == name_l {
-                let val = parse_config_value(
-                  String::unsafe_substring(
-                    rest,
-                    start=ei + 1,
-                    end=rest.length(),
-                  ),
-                )
-                if matches_value_filter(val, value_pattern, fixed_value) {
-                  result.push(val)
-                }
-              }
-            }
-            None => {
-              let key_part = trim_chars(rest, " \t")
-              if key_part.to_lower() == name_l {
-                if matches_value_filter("", value_pattern, fixed_value) {
-                  result.push(config_novalue())
-                }
-              }
-            }
-          }
-        }
-      }
-      None =>
-        if in_section {
-          let eq_idx = trimmed.find("=")
-          match eq_idx {
-            Some(i) => {
-              let key_part = trim_chars(
-                String::unsafe_substring(trimmed, start=0, end=i),
-                " \t",
-              )
-              if key_part.to_lower() == name_l {
-                let raw_val = match line.find("=") {
-                  Some(raw_i) =>
-                    String::unsafe_substring(
-                      line,
-                      start=raw_i + 1,
-                      end=line.length(),
-                    )
-                  None =>
-                    String::unsafe_substring(
-                      trimmed,
-                      start=i + 1,
-                      end=trimmed.length(),
-                    )
-                }
-                let val = parse_config_value(raw_val)
-                if matches_value_filter(val, value_pattern, fixed_value) {
-                  result.push(val)
-                }
-              }
-            }
-            None => {
-              let key_part = trim_chars(trimmed, " \t")
-              if key_part.to_lower() == name_l {
-                if matches_value_filter("", value_pattern, fixed_value) {
-                  result.push(config_novalue())
-                }
-              }
-            }
-          }
-        }
-    }
-  }
-  result
+  @bitlib.get_all_config_values_from_content(
+    content, key, value_pattern, fixed_value,
+  )
 }
 
 ///|
@@ -2234,102 +1885,8 @@ fn matches_value_filter(
 }
 
 ///|
-fn is_horizontal_space(c : Char) -> Bool {
-  c == ' ' || c == '\t'
-}
-
-///|
-fn decode_config_escape(c : Char) -> Char {
-  match c {
-    'n' => '\n'
-    't' => '\t'
-    'r' => '\r'
-    _ => c
-  }
-}
-
-///|
 fn parse_config_value(raw : String) -> String {
-  let sb = StringBuilder::new()
-  let mut in_single = false
-  let mut in_double = false
-  let mut escape = false
-  let mut started = false
-  let mut trailing_ws = 0
-  for c in raw {
-    if escape {
-      sb.write_char(decode_config_escape(c))
-      started = true
-      trailing_ws = 0
-      escape = false
-      continue
-    }
-    if in_double {
-      if c == '\\' {
-        escape = true
-        continue
-      }
-      if c == '"' {
-        in_double = false
-        started = true
-        trailing_ws = 0
-        continue
-      }
-      sb.write_char(c)
-      started = true
-      trailing_ws = 0
-      continue
-    }
-    if in_single {
-      if c == '\'' {
-        in_single = false
-        started = true
-        trailing_ws = 0
-        continue
-      }
-      sb.write_char(c)
-      started = true
-      trailing_ws = 0
-      continue
-    }
-    if not(started) && is_horizontal_space(c) {
-      continue
-    }
-    if c == '"' {
-      in_double = true
-      started = true
-      continue
-    }
-    if c == '\'' {
-      in_single = true
-      started = true
-      continue
-    }
-    if c == '\\' {
-      escape = true
-      started = true
-      trailing_ws = 0
-      continue
-    }
-    if c == '#' || c == ';' {
-      if not(started) || trailing_ws > 0 {
-        break
-      }
-    }
-    sb.write_char(c)
-    started = true
-    if is_horizontal_space(c) {
-      trailing_ws += 1
-    } else {
-      trailing_ws = 0
-    }
-  }
-  let parsed = sb.to_string()
-  if trailing_ws > 0 && parsed.length() >= trailing_ws {
-    String::unsafe_substring(parsed, start=0, end=parsed.length() - trailing_ws)
-  } else {
-    parsed
-  }
+  @bitlib.parse_config_value(raw)
 }
 
 ///|
@@ -2369,34 +1926,7 @@ fn format_comment_suffix(comment : String?) -> String {
 /// Encode a config value for writing, escaping special characters and
 /// quoting when needed (leading/trailing space, #, ;).
 fn encode_config_value(value : String) -> String {
-  let len = value.length()
-  let needs_quoting = len > 0 &&
-    (
-      value[0] == ' ' ||
-      value[0] == '\t' ||
-      value[len - 1] == ' ' ||
-      value[len - 1] == '\t' ||
-      value.contains("#") ||
-      value.contains(";")
-    )
-  let sb = StringBuilder::new()
-  if needs_quoting {
-    sb.write_char('"')
-  }
-  for c in value {
-    match c {
-      '\n' => sb.write_string("\\n")
-      '\t' => sb.write_string("\\t")
-      '\r' => sb.write_string("\\r")
-      '"' => sb.write_string("\\\"")
-      '\\' => sb.write_string("\\\\")
-      _ => sb.write_char(c)
-    }
-  }
-  if needs_quoting {
-    sb.write_char('"')
-  }
-  sb.to_string()
+  @bitlib.encode_config_value(value)
 }
 
 ///|
@@ -2532,35 +2062,12 @@ fn format_config_output_value(
 
 ///|
 fn parse_bool_keyword_value(value : String) -> Bool? {
-  let trimmed = value.trim().to_string().to_lower()
-  match trimmed {
-    "true" | "yes" | "on" => Some(true)
-    "false" | "no" | "off" | "" => Some(false)
-    _ => None
-  }
+  @bitlib.parse_bool_keyword_value(value)
 }
 
 ///|
 fn parse_config_int_value(val : String) -> (Int64?, String?) {
-  match parse_size_value(val) {
-    Some(n) => (Some(n), (None : String?))
-    None => {
-      let trimmed = val.trim().to_string().to_lower()
-      if trimmed.length() == 0 {
-        return ((None : Int64?), (None : String?))
-      }
-      let last = trimmed[trimmed.length() - 1]
-      let invalid_unit = not(last >= '0' && last <= '9') &&
-        last != 'k' &&
-        last != 'm' &&
-        last != 'g'
-      if invalid_unit {
-        ((None : Int64?), Some("invalid unit"))
-      } else {
-        ((None : Int64?), (None : String?))
-      }
-    }
-  }
+  @bitlib.parse_config_int_value(val)
 }
 
 ///|
