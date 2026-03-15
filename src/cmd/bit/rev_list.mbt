@@ -116,6 +116,7 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
   let mut no_walk = false
   let refs : Array[String] = []
   let excludes : Array[String] = []
+  let rev_list_exclude_patterns : Array[String] = []
   let mut i = 0
   while i < args.length() {
     let arg = args[i]
@@ -169,29 +170,30 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
       "--no-max-parents" => max_parents = None
       "--first-parent" => first_parent = true
       "--all" => all = true
-      "--branches" => {
-        let branch_refs = @bitrepo.show_ref(fs, git_dir) catch { _ => [] }
-        for item in branch_refs {
-          if item.0.has_prefix("refs/heads/") {
-            refs.push(item.0)
-          }
-        }
-      }
-      "--tags" => {
-        let tag_refs = @bitrepo.show_ref(fs, git_dir) catch { _ => [] }
-        for item in tag_refs {
-          if item.0.has_prefix("refs/tags/") {
-            refs.push(item.0)
-          }
-        }
-      }
-      "--remotes" => {
-        let remote_refs = @bitrepo.show_ref(fs, git_dir) catch { _ => [] }
-        for item in remote_refs {
-          if item.0.has_prefix("refs/remotes/") {
-            refs.push(item.0)
-          }
-        }
+      "--branches" =>
+        rev_list_add_typed_refs(fs, git_dir, "refs/heads/", "", refs)
+      "--tags" =>
+        rev_list_add_typed_refs(fs, git_dir, "refs/tags/", "", refs)
+      "--remotes" =>
+        rev_list_add_typed_refs(fs, git_dir, "refs/remotes/", "", refs)
+      _ if arg.has_prefix("--branches=") =>
+        rev_list_add_typed_refs(
+          fs, git_dir, "refs/heads/",
+          String::unsafe_substring(arg, start=11, end=arg.length()), refs,
+        )
+      _ if arg.has_prefix("--tags=") =>
+        rev_list_add_typed_refs(
+          fs, git_dir, "refs/tags/",
+          String::unsafe_substring(arg, start=7, end=arg.length()), refs,
+        )
+      _ if arg.has_prefix("--remotes=") =>
+        rev_list_add_typed_refs(
+          fs, git_dir, "refs/remotes/",
+          String::unsafe_substring(arg, start=10, end=arg.length()), refs,
+        )
+      _ if arg.has_prefix("--exclude=") => {
+        let pattern = String::unsafe_substring(arg, start=10, end=arg.length())
+        rev_list_exclude_patterns.push(pattern)
       }
       _ if arg.has_prefix("--glob=") => {
         let pattern = String::unsafe_substring(arg, start=7, end=arg.length())
@@ -401,6 +403,32 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
     }
     // Also include HEAD (detached head case)
     refs.push("HEAD")
+  }
+  // Apply --exclude patterns to filter refs
+  if rev_list_exclude_patterns.length() > 0 {
+    let filtered : Array[String] = []
+    for r in refs {
+      let mut excluded = false
+      for pat in rev_list_exclude_patterns {
+        let full_pat = if pat.has_prefix("refs/") { pat } else { "refs/" + pat }
+        if full_pat.contains("*") {
+          if rev_list_glob_match(full_pat, r) {
+            excluded = true
+            break
+          }
+        } else if r == full_pat || r.has_prefix(full_pat + "/") {
+          excluded = true
+          break
+        }
+      }
+      if not(excluded) {
+        filtered.push(r)
+      }
+    }
+    refs.clear()
+    for r in filtered {
+      refs.push(r)
+    }
   }
   // If no refs specified, default to HEAD
   if refs.length() == 0 && not(indexed_objects) {
@@ -1388,6 +1416,48 @@ fn rev_list_extract_committer_timestamp(data : Bytes) -> Int64 {
 
 ///|
 /// Add refs matching a glob pattern (e.g., "refs/heads" matches all branches).
+/// Add refs of a specific type with optional pattern filter.
+/// prefix: "refs/heads/", "refs/tags/", "refs/remotes/"
+/// pattern: glob within the type (e.g., "subspace/*"), empty = all
+fn rev_list_add_typed_refs(
+  fs : OsFs,
+  git_dir : String,
+  prefix : String,
+  pattern : String,
+  out : Array[String],
+) -> Unit {
+  let all_refs = @bitrepo.show_ref(fs, git_dir) catch { _ => [] }
+  for item in all_refs {
+    let name = item.0
+    if name.has_prefix(prefix) {
+      if pattern.length() == 0 {
+        out.push(name)
+      } else {
+        // Match the part after prefix against the pattern
+        let suffix = String::unsafe_substring(
+          name, start=prefix.length(), end=name.length(),
+        )
+        let full_pattern = if pattern.has_suffix("/") {
+          pattern + "*"
+        } else {
+          pattern
+        }
+        if full_pattern.contains("*") {
+          if rev_list_glob_match(full_pattern, suffix) {
+            out.push(name)
+          }
+        } else if suffix.has_prefix(full_pattern) {
+          if full_pattern.length() >= suffix.length() ||
+            suffix.get_char(full_pattern.length()) == Some('/') {
+            out.push(name)
+          }
+        }
+      }
+    }
+  }
+}
+
+///|
 fn rev_list_add_glob_refs(
   fs : OsFs,
   git_dir : String,
@@ -1395,20 +1465,30 @@ fn rev_list_add_glob_refs(
   out : Array[String],
 ) -> Unit {
   let all_refs = @bitrepo.show_ref(fs, git_dir) catch { _ => [] }
-  // glob pattern: if it doesn't contain *, treat as prefix match
-  // "refs/heads" matches "refs/heads/main", "refs/heads/feature", etc.
-  let has_star = pattern.contains("*")
+  // Auto-prepend "refs/" if pattern doesn't start with it (git compat)
+  let base_pattern = if pattern.has_prefix("refs/") {
+    pattern
+  } else {
+    "refs/" + pattern
+  }
+  // Trailing "/" means "everything under" — append "*"
+  let full_pattern = if base_pattern.has_suffix("/") {
+    base_pattern + "*"
+  } else {
+    base_pattern
+  }
+  let has_star = full_pattern.contains("*")
   for item in all_refs {
     let name = item.0
     if has_star {
-      if rev_list_glob_match(pattern, name) {
+      if rev_list_glob_match(full_pattern, name) {
         out.push(name)
       }
     } else {
       // Prefix match with / boundary
-      if name.has_prefix(pattern) {
-        if pattern.length() >= name.length() ||
-          name.get_char(pattern.length()) == Some('/') {
+      if name.has_prefix(full_pattern) {
+        if full_pattern.length() >= name.length() ||
+          name.get_char(full_pattern.length()) == Some('/') {
           out.push(name)
         }
       }
