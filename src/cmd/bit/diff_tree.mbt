@@ -22,6 +22,8 @@ async fn handle_diff_tree(args : Array[String]) -> Unit raise Error {
   let mut show_tree = false
   let mut show_root = false
   let mut suppress = false
+  let mut stdin_mode = false
+  let mut abbrev : Int? = None
   let mut diff_filter : String? = None
   let positional : Array[String] = []
   let mut i = 0
@@ -39,7 +41,10 @@ async fn handle_diff_tree(args : Array[String]) -> Unit raise Error {
       "-t" => show_tree = true
       "--root" => show_root = true
       "-s" => suppress = true
-      "--stdin" => ()
+      "--stdin" => stdin_mode = true
+      "-c" | "--cc" | "--combined-all-paths" => () // Combined diff flags - accept silently
+      "-M" | "-C" | "-B" | "--find-renames" | "--find-copies" => () // Rename/copy detection - accept silently
+      "--abbrev" => abbrev = Some(7)
       "--" => {
         i += 1
         while i < args.length() {
@@ -52,11 +57,42 @@ async fn handle_diff_tree(args : Array[String]) -> Unit raise Error {
         diff_filter = Some(
           String::unsafe_substring(arg, start=14, end=arg.length()),
         )
+      _ if arg.has_prefix("--abbrev=") => {
+        let val = String::unsafe_substring(arg, start=9, end=arg.length())
+        abbrev = Some(@strconv.parse_int(val))
+      }
+      _ if arg.has_prefix("-M") => () // -M50% etc - rename detection threshold
+      _ if arg.has_prefix("-C") => () // -C50% etc - copy detection threshold
+      _ if arg.has_prefix("-l") => () // -l0 etc - rename limit
+      _ if arg.has_prefix("--pretty") => () // --pretty, --pretty=format:...
+      _ if arg.has_prefix("--format") => () // --format=...
       _ if not(arg.has_prefix("-")) => positional.push(arg)
       _ if arg.has_prefix("-") => warn_unimplemented_arg("diff-tree", arg)
       _ => ()
     }
     i += 1
+  }
+  if stdin_mode {
+    // --stdin mode: read commit IDs from stdin, one per line
+    let input = read_all_stdin()
+    let text = decode_bytes(input)
+    let db = @bitlib.ObjectDb::load(rfs, git_dir)
+    for line_view in text.split("\n") {
+      let line = trim_string(line_view.to_string())
+      if line.length() == 0 {
+        continue
+      }
+      // Each line is a commit ID (possibly with extra info after space)
+      let commit_hex = match line.find(" ") {
+        Some(sp) => String::unsafe_substring(line, start=0, end=sp)
+        None => line
+      }
+      diff_tree_process_commit(
+        db, rfs, git_dir, commit_hex, recursive, patch, name_only, name_status, no_commit_id,
+        show_tree, show_root, suppress, diff_filter, abbrev,
+      )
+    }
+    return
   }
   if positional.length() == 0 {
     eprint_line("fatal: must give at least one tree")
@@ -66,52 +102,22 @@ async fn handle_diff_tree(args : Array[String]) -> Unit raise Error {
   let db = @bitlib.ObjectDb::load(rfs, git_dir)
   if positional.length() == 1 {
     // Single commit: diff parent tree vs commit tree
-    let commit_hex = positional[0]
-    let commit_id = commit_tree_resolve_hex(rfs, git_dir, commit_hex)
-    let obj = db.get(rfs, commit_id)
-    guard obj is Some(commit_obj) else {
-      eprint_line("fatal: bad object \{commit_hex}")
-      @sys.exit(128)
-      return
-    }
-    if commit_obj.obj_type != @bitcore.ObjectType::Commit {
-      eprint_line("fatal: not a commit object")
-      @sys.exit(128)
-      return
-    }
-    let info = @bitcore.parse_commit(commit_obj.data)
-    let old_tree : @bitcore.ObjectId? = if info.parents.length() > 0 {
-      let parent_obj = db.get(rfs, info.parents[0])
-      match parent_obj {
-        Some(pobj) => {
-          let parent_info = @bitcore.parse_commit(pobj.data)
-          Some(parent_info.tree)
-        }
-        None => None
-      }
-    } else if show_root {
-      None
-    } else {
-      return
-    }
-    if not(no_commit_id) {
-      print_line(commit_id.to_hex())
-    }
-    if not(suppress) {
-      diff_tree_output(
-        db,
-        rfs,
-        old_tree,
-        info.tree,
-        recursive,
-        patch,
-        name_only,
-        name_status,
-        show_tree,
-        diff_filter,
-        git_dir,
-      )
-    }
+    diff_tree_process_commit(
+      db,
+      rfs,
+      git_dir,
+      positional[0],
+      recursive,
+      patch,
+      name_only,
+      name_status,
+      no_commit_id,
+      show_tree,
+      show_root,
+      suppress,
+      diff_filter,
+      abbrev,
+    )
   } else {
     // Two trees
     let old_id = commit_tree_resolve_hex(rfs, git_dir, positional[0])
@@ -131,8 +137,82 @@ async fn handle_diff_tree(args : Array[String]) -> Unit raise Error {
         show_tree,
         diff_filter,
         git_dir,
+        abbrev,
       )
     }
+  }
+}
+
+///|
+async fn diff_tree_process_commit(
+  db : @bitlib.ObjectDb,
+  fs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  commit_hex : String,
+  recursive : Bool,
+  patch : Bool,
+  name_only : Bool,
+  name_status : Bool,
+  no_commit_id : Bool,
+  show_tree : Bool,
+  show_root : Bool,
+  suppress : Bool,
+  diff_filter : String?,
+  abbrev : Int?,
+) -> Unit raise Error {
+  let commit_id = commit_tree_resolve_hex(fs, git_dir, commit_hex)
+  let obj = db.get(fs, commit_id)
+  guard obj is Some(commit_obj) else {
+    eprint_line("fatal: bad object \{commit_hex}")
+    @sys.exit(128)
+    return
+  }
+  if commit_obj.obj_type != @bitcore.ObjectType::Commit {
+    eprint_line("fatal: not a commit object")
+    @sys.exit(128)
+    return
+  }
+  let info = @bitcore.parse_commit(commit_obj.data)
+  // For merge commits (>1 parent), skip output unless -c/--cc (which we accept but don't implement yet)
+  if info.parents.length() > 1 {
+    // Print commit id line for merge commits but no diff
+    if not(no_commit_id) {
+      print_line(commit_id.to_hex())
+    }
+    return
+  }
+  let old_tree : @bitcore.ObjectId? = if info.parents.length() > 0 {
+    let parent_obj = db.get(fs, info.parents[0])
+    match parent_obj {
+      Some(pobj) => {
+        let parent_info = @bitcore.parse_commit(pobj.data)
+        Some(parent_info.tree)
+      }
+      None => None
+    }
+  } else if show_root {
+    None
+  } else {
+    return
+  }
+  if not(no_commit_id) {
+    print_line(commit_id.to_hex())
+  }
+  if not(suppress) {
+    diff_tree_output(
+      db,
+      fs,
+      old_tree,
+      info.tree,
+      recursive,
+      patch,
+      name_only,
+      name_status,
+      show_tree,
+      diff_filter,
+      git_dir,
+      abbrev,
+    )
   }
 }
 
@@ -202,6 +282,17 @@ fn diff_tree_collect_entries(
 }
 
 ///|
+fn diff_tree_abbrev_hex(hex : String, abbrev : Int?) -> String {
+  match abbrev {
+    None => hex
+    Some(n) => {
+      let len = if n < 4 { 4 } else if n > 40 { 40 } else { n }
+      String::unsafe_substring(hex, start=0, end=len)
+    }
+  }
+}
+
+///|
 async fn diff_tree_output(
   db : @bitlib.ObjectDb,
   fs : &@bitcore.RepoFileSystem,
@@ -214,6 +305,7 @@ async fn diff_tree_output(
   show_tree : Bool,
   diff_filter : String?,
   git_dir : String,
+  abbrev : Int?,
 ) -> Unit raise Error {
   let old_entries : Map[String, DiffTreeEntry] = {}
   let new_entries : Map[String, DiffTreeEntry] = {}
@@ -281,8 +373,8 @@ async fn diff_tree_output(
     // Raw format
     for item in results {
       let (path, old_mode, new_mode, old_id, new_id, status) = item
-      let old_hex = old_id.to_hex()
-      let new_hex = new_id.to_hex()
+      let old_hex = diff_tree_abbrev_hex(old_id.to_hex(), abbrev)
+      let new_hex = diff_tree_abbrev_hex(new_id.to_hex(), abbrev)
       print_line(
         ":\{old_mode} \{new_mode} \{old_hex} \{new_hex} \{status}\t\{path}",
       )

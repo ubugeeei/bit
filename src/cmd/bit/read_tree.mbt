@@ -4,18 +4,21 @@
 async fn handle_read_tree(args : Array[String]) -> Unit raise Error {
   let fs = OsFs::new()
   let git_dir = find_git_dir(fs)
+  let mut merge = false
   let mut reset = false
   let mut update = false
   let mut dry_run = false
   let mut empty = false
+  let mut index_only = false
   let tree_refs : Array[String] = []
   let mut i = 0
   while i < args.length() {
     let arg = args[i]
     match arg {
-      "-m" => () // Merge mode - simplified
+      "-m" => merge = true
       "--reset" => reset = true
       "-u" => update = true
+      "-i" => index_only = true
       "-n" | "--dry-run" => dry_run = true
       "--empty" => empty = true
       "--prefix" if i + 1 < args.length() => {
@@ -46,37 +49,72 @@ async fn handle_read_tree(args : Array[String]) -> Unit raise Error {
     @sys.exit(128)
     return
   }
-  // Resolve tree-ish to tree object
-  let tree_id = match @bitrepo.rev_parse(fs, git_dir, tree_refs[0]) {
-    Some(id) => plumb_resolve_to_tree(fs, git_dir, id)
-    None => {
-      eprint_line("fatal: not a valid object name: " + tree_refs[0])
-      @sys.exit(128)
-      return
+  let db = @bitlib.ObjectDb::load(fs, git_dir)
+  if tree_refs.length() == 1 {
+    // Single tree read
+    let tree_id = match @bitrepo.rev_parse(fs, git_dir, tree_refs[0]) {
+      Some(id) => plumb_resolve_to_tree(fs, git_dir, id)
+      None => {
+        eprint_line("fatal: not a valid object name: " + tree_refs[0])
+        @sys.exit(128)
+        return
+      }
+    }
+    let files = @bitlib.collect_tree_files(db, fs, tree_id)
+    let entries = @bitlib.tree_files_to_index(db, fs, files)
+    if not(dry_run) {
+      @bitlib.write_index_entries(fs, git_dir, entries)
+    }
+    // Handle -u: update working tree (unless -i: index only)
+    if update && not(dry_run) && not(index_only) {
+      let root = get_work_root()
+      @bitlib.write_worktree_from_files(
+        db,
+        fs,
+        fs,
+        root,
+        git_dir,
+        files,
+        remove_missing=reset || merge,
+      )
+    }
+  } else {
+    // Multi-tree overlay read: union of all trees' files
+    // Later trees take precedence for conflicting paths
+    let merged_files : Map[String, @bitlib.TreeFileEntry] = {}
+    for tree_ref in tree_refs {
+      let tree_id = match @bitrepo.rev_parse(fs, git_dir, tree_ref) {
+        Some(id) => plumb_resolve_to_tree(fs, git_dir, id)
+        None => {
+          eprint_line("fatal: not a valid object name: " + tree_ref)
+          @sys.exit(128)
+          return
+        }
+      }
+      let files = @bitlib.collect_tree_files(db, fs, tree_id)
+      for path, entry in files {
+        merged_files[path] = entry
+      }
+    }
+    let entries = @bitlib.tree_files_to_index(db, fs, merged_files)
+    if not(dry_run) {
+      @bitlib.write_index_entries(fs, git_dir, entries)
+    }
+    if update && not(dry_run) && not(index_only) {
+      let root = get_work_root()
+      @bitlib.write_worktree_from_files(
+        db,
+        fs,
+        fs,
+        root,
+        git_dir,
+        merged_files,
+        remove_missing=reset,
+      )
     }
   }
-  // Collect tree files
-  let db = @bitlib.ObjectDb::load(fs, git_dir)
-  let files = @bitlib.collect_tree_files(db, fs, tree_id)
-  // Get entries from tree
-  let entries = @bitlib.tree_files_to_index(db, fs, files)
-  // Write to index
-  if not(dry_run) {
-    @bitlib.write_index_entries(fs, git_dir, entries)
-  }
-  // Handle -u: update working tree
-  if update && not(dry_run) {
-    let root = get_work_root()
-    @bitlib.write_worktree_from_files(
-      db,
-      fs,
-      fs,
-      root,
-      git_dir,
-      files,
-      remove_missing=reset,
-    )
-  }
+  // Suppress unused variable warnings
+  ignore(merge)
 }
 
 ///|
