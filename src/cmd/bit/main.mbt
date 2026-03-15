@@ -1264,6 +1264,7 @@ async fn dispatch_known_command(
     "verify-pack" => handle_verify_pack(rest)
     "pack-redundant" => handle_pack_redundant(rest)
     "unpack-objects" => handle_unpack_objects(rest)
+    "archive" => handle_archive(rest)
     "bundle" => handle_bundle(rest)
     "fast-export" => handle_fast_export(rest)
     "fast-import" => handle_fast_import(rest)

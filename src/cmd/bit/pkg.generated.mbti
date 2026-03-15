@@ -87,6 +87,8 @@ type DiffNoIndexEntry
 
 type DiffOutputSelection
 
+type FastImportParser
+
 type FetchHeadEntry
 
 type FormatPatchOptions
