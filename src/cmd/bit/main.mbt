@@ -98,6 +98,11 @@ async fn show_help() -> Unit {
     #|   var             Print a Git logical variable
     #|   verify-pack     Validate packed Git archive files
     #|   write-tree      Create a tree object from the current index
+    #|   count-objects   Count unpacked objects and their disk consumption
+    #|   fmt-merge-msg   Produce a merge commit message
+    #|   name-rev        Find symbolic names for given revs
+    #|   patch-id        Compute a stable patch identifier
+    #|   update-server-info  Update auxiliary info for dumb HTTP serving
     #|
     #|See 'git help <command>' for more information on a specific command.
   print_line(help)
@@ -356,6 +361,22 @@ fn show_command_help_specs() -> Array[(String, String, String)] {
     ),
     (
       "shell", "bit shell [--login] [<path>]", "Start an interactive bit shell with command forwarding.",
+    ),
+    (
+      "count-objects", "git count-objects [-v] [-H]", "Count unpacked number of objects and their disk consumption.",
+    ),
+    (
+      "fmt-merge-msg", "git fmt-merge-msg [--log[=<n>]] [-m <message>]", "Produce a merge commit message.",
+    ),
+    (
+      "name-rev", "git name-rev [--tags] [--refs=<pattern>] [--name-only] <commit-ish>...",
+      "Find symbolic names for given revs.",
+    ),
+    (
+      "patch-id", "git patch-id [--stable | --unstable]", "Compute a stable patch identifier.",
+    ),
+    (
+      "update-server-info", "git update-server-info [-f | --force]", "Update auxiliary info for dumb HTTP serving.",
     ),
     ("version", "git version", "Show version information."),
     ("pr", "bit pr <subcommand> [<args>]", "Manage pull requests."),
@@ -1205,6 +1226,11 @@ async fn dispatch_known_command(
     "var" => handle_var(rest)
     "stripspace" => handle_stripspace(rest)
     "ls-remote" => handle_ls_remote(rest)
+    "fmt-merge-msg" => handle_fmt_merge_msg(rest)
+    "patch-id" => handle_patch_id(rest)
+    "count-objects" => handle_count_objects(rest)
+    "name-rev" => handle_name_rev(rest)
+    "update-server-info" => handle_update_server_info(rest)
     "version" => print_line("git version \{bit_version_tag}")
     // Error for unknown commands
     _ => {
