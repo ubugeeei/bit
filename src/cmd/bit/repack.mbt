@@ -309,6 +309,25 @@ fn repack_update_server_info(
   @fs.write_string_to_file(packs_path, buf.to_string()) catch {
     _ => ()
   }
+  // Write info/refs listing all refs
+  let refs_info_dir = git_dir + "/info"
+  ensure_dir(refs_info_dir) catch {
+    _ => return
+  }
+  let refs_path = refs_info_dir + "/refs"
+  let rfs : &@bitcore.RepoFileSystem = fs
+  let all_refs = @bitrepo.show_ref(rfs, git_dir) catch { _ => [] }
+  let refs_buf = StringBuilder::new()
+  for item in all_refs {
+    let (name, id) = item
+    refs_buf.write_string(id.to_hex())
+    refs_buf.write_string("\t")
+    refs_buf.write_string(name)
+    refs_buf.write_string("\n")
+  }
+  @fs.write_string_to_file(refs_path, refs_buf.to_string()) catch {
+    _ => ()
+  }
 }
 
 ///|
