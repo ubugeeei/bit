@@ -32,6 +32,8 @@ jobs:
           chmod +x tools/git-shim/moon
           # Set system git as fallback for wbtests (third_party/git/git is not built in test job)
           which git > tools/git-shim/real-git-path
+          # Allow file:// protocol for submodule wbtests (git 2.38+ defaults to user)
+          git config --global protocol.file.allow always
       - name: Run JS and WASM tests
         run: |
           moon test --target js -p mizchi/bit -p mizchi/bit/lib
