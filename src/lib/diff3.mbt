@@ -53,18 +53,20 @@ pub fn ContentMergeOptions::favor_union() -> ContentMergeOptions {
 
 ///|
 pub fn ContentMergeOptions::new(
-  conflict_style~ : ConflictStyle = ConflictStyle::Merge,
-  ours_label~ : String = "HEAD",
-  base_label~ : String = "parent",
-  theirs_label~ : String = "incoming",
-  marker_size~ : Int = 7,
-  favor~ : MergeFavor = MergeFavor::NoFavor,
+  conflict_style? : ConflictStyle = ConflictStyle::Merge,
+  ours_label? : String = "HEAD",
+  base_label? : String = "parent",
+  theirs_label? : String = "incoming",
+  marker_size? : Int = 7,
+  favor? : MergeFavor = MergeFavor::NoFavor,
 ) -> ContentMergeOptions {
   { conflict_style, ours_label, base_label, theirs_label, marker_size, favor }
 }
 
 ///|
-pub fn ContentMergeOptions::with_diff3(self : ContentMergeOptions) -> ContentMergeOptions {
+pub fn ContentMergeOptions::with_diff3(
+  self : ContentMergeOptions,
+) -> ContentMergeOptions {
   { ..self, conflict_style: ConflictStyle::Diff3 }
 }
 

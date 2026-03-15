@@ -61,7 +61,13 @@ fn var_default_branch() -> String {
   }
   let git_dir = resolve_git_dir(fs, root)
   let config_path = git_dir + "/config"
-  let value = get_config_value(fs, config_path, "init.defaultBranch", None, false) catch {
+  let value = get_config_value(
+    fs,
+    config_path,
+    "init.defaultBranch",
+    None,
+    false,
+  ) catch {
     _ => return "main"
   }
   match value {

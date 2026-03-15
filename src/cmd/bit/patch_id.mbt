@@ -97,9 +97,7 @@ fn patch_id_compute(input : String) -> Array[(String, String)] {
 fn patch_id_hash(lines : Array[String]) -> String {
   let content = lines.join("\n")
   let bytes = Bytes::from_array(
-    FixedArray::makei(content.length(), fn(i) {
-      content[i].to_int().to_byte()
-    }),
+    FixedArray::makei(content.length(), fn(i) { content[i].to_int().to_byte() }),
   )
   @bitcore.sha1(bytes).to_hex()
 }

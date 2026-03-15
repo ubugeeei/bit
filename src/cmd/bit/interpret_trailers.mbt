@@ -58,16 +58,14 @@ async fn handle_interpret_trailers(args : Array[String]) -> Unit raise Error {
         let value = String::unsafe_substring(arg, start=10, end=arg.length())
         trailers.push(value)
       }
-      _ if arg.has_prefix("--where=") => {
+      _ if arg.has_prefix("--where=") =>
         where_pos = String::unsafe_substring(arg, start=8, end=arg.length())
-      }
-      _ if arg.has_prefix("--if-exists=") => {
+      _ if arg.has_prefix("--if-exists=") =>
         if_exists = String::unsafe_substring(arg, start=12, end=arg.length())
-      }
-      _ if arg.has_prefix("--if-missing=") => {
+      _ if arg.has_prefix("--if-missing=") =>
         if_missing = String::unsafe_substring(arg, start=13, end=arg.length())
-      }
-      _ if arg.has_prefix("-") => warn_unimplemented_arg("interpret-trailers", arg)
+      _ if arg.has_prefix("-") =>
+        warn_unimplemented_arg("interpret-trailers", arg)
       _ => positional.push(arg)
     }
     i += 1
@@ -79,9 +77,7 @@ async fn handle_interpret_trailers(args : Array[String]) -> Unit raise Error {
   // Read input
   let fs = OsFs::new()
   let input = if positional.length() > 0 {
-    let file_bytes = fs.read_file(positional[0]) catch {
-      err => raise err
-    }
+    let file_bytes = fs.read_file(positional[0]) catch { err => raise err }
     decode_bytes(file_bytes)
   } else {
     decode_bytes(read_all_stdin())
@@ -141,7 +137,8 @@ fn interpret_trailers_parse(input : String) -> Array[String] {
     lines.push(line_view.to_string())
   }
   // Remove trailing empty lines
-  while lines.length() > 0 && trim_string(lines[lines.length() - 1]).length() == 0 {
+  while lines.length() > 0 &&
+        trim_string(lines[lines.length() - 1]).length() == 0 {
     ignore(lines.pop())
   }
   // Walk backwards to find trailer block

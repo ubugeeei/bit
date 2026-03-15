@@ -71,12 +71,16 @@ async fn handle_count_objects(args : Array[String]) -> Unit raise Error {
         let ppath = pack_dir + "/" + entry
         let data = rfs.read_file(ppath) catch { _ => continue }
         pack_size += data.length().to_int64()
-      } else if entry.has_suffix(".idx") || entry.has_suffix(".keep") || entry.has_suffix(
-        ".rev",
-      ) || entry.has_suffix(".bitmap") || entry.has_suffix(".mtimes") {
+      } else if entry.has_suffix(".idx") ||
+        entry.has_suffix(".keep") ||
+        entry.has_suffix(".rev") ||
+        entry.has_suffix(".bitmap") ||
+        entry.has_suffix(".mtimes") {
         // These are expected pack-related files
         ()
-      } else if entry != "." && entry != ".." && not(entry.has_prefix("multi-pack-index")) {
+      } else if entry != "." &&
+        entry != ".." &&
+        not(entry.has_prefix("multi-pack-index")) {
         garbage_count += 1
         let gpath = pack_dir + "/" + entry
         let data = rfs.read_file(gpath) catch { _ => continue }
@@ -92,9 +96,7 @@ async fn handle_count_objects(args : Array[String]) -> Unit raise Error {
     print_line("size-pack: \{count_objects_format_size(pack_size, true)}")
     print_line("prune-packable: 0")
     print_line("garbage: \{garbage_count}")
-    print_line(
-      "size-garbage: \{count_objects_format_size(garbage_size, true)}",
-    )
+    print_line("size-garbage: \{count_objects_format_size(garbage_size, true)}")
   } else {
     let size_kb = (loose_size + 1023L) / 1024L
     let pack_size_kb = (pack_size + 1023L) / 1024L

@@ -32,8 +32,7 @@ async fn handle_ls_remote(args : Array[String]) -> Unit raise Error {
       }
       _ if arg.has_prefix("--upload-pack=") ||
         arg.has_prefix("--server-option=") ||
-        arg.has_prefix("--sort=") =>
-        ()
+        arg.has_prefix("--sort=") => ()
       _ if arg.has_prefix("-") => warn_unimplemented_arg("ls-remote", arg)
       _ => positional.push(arg)
     }
@@ -139,9 +138,9 @@ fn ls_remote_match_pattern(refname : String, pattern : String) -> Bool {
   } else {
     // Exact match or suffix match (like git)
     refname == pattern ||
-      refname.has_suffix("/" + pattern) ||
-      refname == "refs/" + pattern ||
-      refname == "refs/heads/" + pattern ||
-      refname == "refs/tags/" + pattern
+    refname.has_suffix("/" + pattern) ||
+    refname == "refs/" + pattern ||
+    refname == "refs/heads/" + pattern ||
+    refname == "refs/tags/" + pattern
   }
 }

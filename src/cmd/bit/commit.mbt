@@ -1199,24 +1199,6 @@ fn decode_commit_message_bytes(data : Bytes, encoding : String) -> String {
 }
 
 ///|
-fn is_iso_8859_1_encoding(encoding : String) -> Bool {
-  let normalized = normalize_commit_encoding_name(encoding)
-  normalized == "iso88591" || normalized == "latin1" || normalized == "latin"
-}
-
-///|
-fn normalize_commit_encoding_name(value : String) -> String {
-  let out = StringBuilder::new()
-  for c in trim_string(value).to_lower() {
-    if c == '-' || c == '_' || c == ' ' {
-      continue
-    }
-    out.write_char(c)
-  }
-  out.to_string()
-}
-
-///|
 fn abs_path(path : String) -> String {
   if path.has_prefix("/") {
     return path

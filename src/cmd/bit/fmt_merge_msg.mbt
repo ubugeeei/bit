@@ -31,12 +31,11 @@ async fn handle_fmt_merge_msg(args : Array[String]) -> Unit raise Error {
         custom_message = Some(
           String::unsafe_substring(arg, start=10, end=arg.length()),
         )
-      _ if arg.has_prefix("--into-name") => {
+      _ if arg.has_prefix("--into-name") =>
         // Accept but ignore --into-name for now
         if arg == "--into-name" {
           i += 1
         }
-      }
       _ => ()
     }
     i += 1

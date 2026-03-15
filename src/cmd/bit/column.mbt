@@ -28,7 +28,7 @@ async fn handle_column(args : Array[String]) -> Unit raise Error {
       _ if arg.has_prefix("--raw-mode=") => {
         let val = String::unsafe_substring(arg, start=11, end=arg.length())
         // Raw mode is a numeric value
-        let n = try { @strconv.parse_int(val) } catch { _ => 0 }
+        let n = @strconv.parse_int(val) catch { _ => 0 }
         // Bit 0-1: layout (0=column, 1=row, 2=plain)
         let layout = n & 0x3
         match layout {
@@ -39,11 +39,11 @@ async fn handle_column(args : Array[String]) -> Unit raise Error {
       }
       _ if arg.has_prefix("--width=") => {
         let val = String::unsafe_substring(arg, start=8, end=arg.length())
-        width = try { @strconv.parse_int(val) } catch { _ => 80 }
+        width = @strconv.parse_int(val) catch { _ => 80 }
       }
       _ if arg.has_prefix("--padding=") => {
         let val = String::unsafe_substring(arg, start=10, end=arg.length())
-        padding = try { @strconv.parse_int(val) } catch { _ => 1 }
+        padding = @strconv.parse_int(val) catch { _ => 1 }
       }
       _ if arg.has_prefix("--indent=") => () // accept but ignore
       _ if arg.has_prefix("-") => warn_unimplemented_arg("column", arg)
@@ -62,11 +62,10 @@ async fn handle_column(args : Array[String]) -> Unit raise Error {
     return
   }
   match mode {
-    "plain" => {
+    "plain" =>
       for item in items {
         print_line(item)
       }
-    }
     "row" => column_layout_row(items, width, padding)
     _ =>
       // Default: column layout
@@ -90,7 +89,11 @@ async fn column_layout_column(
   let col_width = max_width + padding
   let num_cols = if col_width > 0 {
     let n = width / col_width
-    if n < 1 { 1 } else { n }
+    if n < 1 {
+      1
+    } else {
+      n
+    }
   } else {
     1
   }
@@ -138,7 +141,11 @@ async fn column_layout_row(
   let col_width = max_width + padding
   let num_cols = if col_width > 0 {
     let n = width / col_width
-    if n < 1 { 1 } else { n }
+    if n < 1 {
+      1
+    } else {
+      n
+    }
   } else {
     1
   }

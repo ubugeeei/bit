@@ -51,9 +51,7 @@ async fn mktag_validate(content : String) -> Unit {
   }
   let hex = String::unsafe_substring(line0, start=7, end=line0.length())
   if hex.length() != 40 || not(mktag_is_hex(hex)) {
-    eprint_line(
-      "error: badObjectSha1: tag has too-short object SHA-1",
-    )
+    eprint_line("error: badObjectSha1: tag has too-short object SHA-1")
     @sys.exit(1)
   }
   // Line 1: type <type>
@@ -93,8 +91,28 @@ async fn mktag_validate(content : String) -> Unit {
 fn mktag_is_hex(s : String) -> Bool {
   for c in s.to_array() {
     match c {
-      '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | 'a' |
-      'b' | 'c' | 'd' | 'e' | 'f' | 'A' | 'B' | 'C' | 'D' | 'E' | 'F' => ()
+      '0'
+      | '1'
+      | '2'
+      | '3'
+      | '4'
+      | '5'
+      | '6'
+      | '7'
+      | '8'
+      | '9'
+      | 'a'
+      | 'b'
+      | 'c'
+      | 'd'
+      | 'e'
+      | 'f'
+      | 'A'
+      | 'B'
+      | 'C'
+      | 'D'
+      | 'E'
+      | 'F' => ()
       _ => return false
     }
   }

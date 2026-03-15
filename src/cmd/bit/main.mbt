@@ -177,7 +177,8 @@ fn show_command_help_specs() -> Array[(String, String, String)] {
       "merge-base", "git merge-base [-a | --all] <commit> <commit>...", "Find common ancestor between commits.",
     ),
     (
-      "merge-tree", "git merge-tree [--write-tree] [<options>] <branch1> <branch2>", "Perform merge without touching index or working tree.",
+      "merge-tree", "git merge-tree [--write-tree] [<options>] <branch1> <branch2>",
+      "Perform merge without touching index or working tree.",
     ),
     (
       "stash", "git stash [<options>] [<message>]", "Stash the changes in a dirty working directory.",
@@ -326,9 +327,7 @@ fn show_command_help_specs() -> Array[(String, String, String)] {
     (
       "git-upload-pack", "git upload-pack [<options>] <git-dir>", "Send objects packed back to git-fetch-pack.",
     ),
-    (
-      "var", "git var [-l | <variable>]", "Print a Git logical variable.",
-    ),
+    ("var", "git var [-l | <variable>]", "Print a Git logical variable."),
     (
       "verify-pack", "git verify-pack [<options>] <pack>...", "Validate packed Git archive files.",
     ),
@@ -389,16 +388,13 @@ fn show_command_help_specs() -> Array[(String, String, String)] {
       "check-ref-format", "git check-ref-format [--normalize] [--allow-onelevel] [--branch] <refname>",
       "Ensure that a reference name is well formed.",
     ),
-    (
-      "mktag", "git mktag", "Create a validated tag object.",
-    ),
+    ("mktag", "git mktag", "Create a validated tag object."),
     (
       "interpret-trailers", "git interpret-trailers [--trailer <token>[(=|:)<value>]] [<file>...]",
       "Add or parse trailing meta-data in commit messages.",
     ),
     (
-      "column", "git column [--mode=<mode>] [--width=<n>] [--padding=<n>]",
-      "Display data in columns.",
+      "column", "git column [--mode=<mode>] [--width=<n>] [--padding=<n>]", "Display data in columns.",
     ),
     ("version", "git version", "Show version information."),
     ("pr", "bit pr <subcommand> [<args>]", "Manage pull requests."),

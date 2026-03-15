@@ -20,7 +20,8 @@ async fn handle_check_ref_format(args : Array[String]) -> Unit raise Error {
         )
         return
       }
-      _ if arg.has_prefix("-") => warn_unimplemented_arg("check-ref-format", arg)
+      _ if arg.has_prefix("-") =>
+        warn_unimplemented_arg("check-ref-format", arg)
       _ => positional.push(arg)
     }
   }
@@ -52,7 +53,7 @@ async fn handle_check_ref_format(args : Array[String]) -> Unit raise Error {
 ///|
 fn check_ref_format_valid(
   refname : String,
-  allow_onelevel~ : Bool = false,
+  allow_onelevel? : Bool = false,
 ) -> Bool {
   if refname.length() == 0 {
     return false
@@ -150,11 +151,7 @@ fn check_ref_format_resolve_branch(name : String) -> String? {
   if name.has_prefix("@{-") && name.has_suffix("}") {
     // For now, just validate it's a number and return None
     // (full implementation would read reflog)
-    let inner = String::unsafe_substring(
-      name,
-      start=3,
-      end=name.length() - 1,
-    )
+    let inner = String::unsafe_substring(name, start=3, end=name.length() - 1)
     for c in inner.to_array() {
       if c < '0' || c > '9' {
         return None

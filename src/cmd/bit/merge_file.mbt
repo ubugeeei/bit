@@ -78,10 +78,7 @@ async fn handle_merge_file(args : Array[String]) -> Unit raise Error {
   }
   // Read inputs and perform merge
   let texts = merge_file_read_inputs(
-    object_id_mode,
-    current_arg,
-    base_arg,
-    other_arg,
+    object_id_mode, current_arg, base_arg, other_arg,
   )
   let result = @bitlib.content_merge(texts.1, texts.0, texts.2, options)
   // Output result

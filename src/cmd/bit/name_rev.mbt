@@ -108,7 +108,7 @@ fn name_rev_build_ref_map(
   git_dir : String,
   tags_only : Bool,
   refs_pattern : String?,
-) -> Array[(String, @bitcore.ObjectId)] raise Error {
+) -> Array[(String, @bitcore.ObjectId)] {
   let all_refs = @bitrepo.show_ref(rfs, git_dir) catch { _ => [] }
   let result : Array[(String, @bitcore.ObjectId)] = []
   for item in all_refs {
@@ -131,8 +131,7 @@ fn name_rev_build_ref_map(
     } else if name.has_prefix("refs/heads/") {
       String::unsafe_substring(name, start=11, end=name.length())
     } else if name.has_prefix("refs/remotes/") {
-      "remotes/" +
-      String::unsafe_substring(name, start=13, end=name.length())
+      "remotes/" + String::unsafe_substring(name, start=13, end=name.length())
     } else {
       name
     }
@@ -225,7 +224,9 @@ fn name_rev_deref_tag(
   for line_view in data.split("\n") {
     let line = line_view.to_string()
     if line.has_prefix("object ") {
-      let hex = trim_string(String::unsafe_substring(line, start=7, end=line.length()))
+      let hex = trim_string(
+        String::unsafe_substring(line, start=7, end=line.length()),
+      )
       let oid = @bitcore.ObjectId::from_hex(hex) catch { _ => return id }
       return oid
     }
@@ -234,7 +235,10 @@ fn name_rev_deref_tag(
 }
 
 ///|
-fn name_rev_replace_oids(line : String, name_map : Map[String, String]) -> String {
+fn name_rev_replace_oids(
+  line : String,
+  name_map : Map[String, String],
+) -> String {
   // Find 40-char hex strings and replace with names
   let chars = line.to_array()
   let result = StringBuilder::new()

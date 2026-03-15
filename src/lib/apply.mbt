@@ -1,19 +1,18 @@
 ///|
 pub struct PatchInfo {
-  /// Display name for stat output (may contain {old => new} for renames)
-  pub display_name : String
-  pub additions : Int
-  pub deletions : Int
-  pub is_rename : Bool
-  pub is_copy : Bool
-  pub is_new : Bool
-  pub is_delete : Bool
-  pub old_name : String
-  pub new_name : String
-  pub old_mode : String
-  pub new_mode : String
-  pub similarity_index : Int
-  pub dissimilarity_index : Int
+  display_name : String
+  additions : Int
+  deletions : Int
+  is_rename : Bool
+  is_copy : Bool
+  is_new : Bool
+  is_delete : Bool
+  old_name : String
+  new_name : String
+  old_mode : String
+  new_mode : String
+  similarity_index : Int
+  dissimilarity_index : Int
 }
 
 ///|

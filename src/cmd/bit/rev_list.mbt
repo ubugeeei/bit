@@ -829,16 +829,6 @@ async fn rev_list_parse_int_or_die(value : String) -> Int raise Error {
 }
 
 ///|
-fn rev_list_normalize_skip(skip_count : Int) -> Int {
-  @bitlib.rev_list_normalize_skip(skip_count)
-}
-
-///|
-fn rev_list_normalize_max_count(max_count : Int?) -> Int? {
-  @bitlib.rev_list_normalize_max_count(max_count)
-}
-
-///|
 fn rev_list_window(
   length : Int,
   skip_count : Int,

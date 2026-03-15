@@ -17,7 +17,7 @@ test "rev-list: window honors skip and max-count" {
 
 ///|
 test "rev-list: negative max-count is treated as unlimited" {
-  assert_eq(rev_list_normalize_max_count(Some(-1)), None)
+  assert_eq(@bitlib.rev_list_normalize_max_count(Some(-1)), None)
   assert_eq(rev_list_window(5, 0, Some(-1)), (0, 5))
 }
 

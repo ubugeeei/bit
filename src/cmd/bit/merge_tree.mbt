@@ -59,7 +59,9 @@ async fn handle_merge_tree(args : Array[String]) -> Unit raise Error {
   // Collect tree files for base, ours, theirs and convert to our own entry type
   let base_files = match base_id {
     Some(id) =>
-      merge_tree_convert_files(@bitlib.collect_tree_files_from_commit(db, fs, id))
+      merge_tree_convert_files(
+        @bitlib.collect_tree_files_from_commit(db, fs, id),
+      )
     None => {}
   }
   let ours_files = merge_tree_convert_files(
@@ -82,21 +84,14 @@ async fn handle_merge_tree(args : Array[String]) -> Unit raise Error {
       None => ""
     }
     let ours_content = merge_tree_get_blob_text(db, fs, candidate.ours_id)
-    let theirs_content = merge_tree_get_blob_text(
-      db, fs, candidate.theirs_id,
-    )
+    let theirs_content = merge_tree_get_blob_text(db, fs, candidate.theirs_id)
     // Check for binary content
     let ours_data = merge_tree_get_blob_data(db, fs, candidate.ours_id)
-    let theirs_data = merge_tree_get_blob_data(
-      db, fs, candidate.theirs_id,
-    )
+    let theirs_data = merge_tree_get_blob_data(db, fs, candidate.theirs_id)
     if merge_tree_is_binary(ours_data) || merge_tree_is_binary(theirs_data) {
       conflicts.push(candidate.path)
       // For binary conflicts, keep ours side in result tree
-      merged[candidate.path] = {
-        id: candidate.ours_id,
-        mode: candidate.mode,
-      }
+      merged[candidate.path] = { id: candidate.ours_id, mode: candidate.mode }
       continue
     }
     let result = @bitlib.content_merge(
@@ -228,8 +223,7 @@ fn merge_tree_commit_parents(
 ) -> Array[@bitcore.ObjectId] raise Error {
   let obj = db.get(fs, commit_id)
   match obj {
-    None =>
-      raise @bitcore.GitError::InvalidObject("Missing commit object")
+    None => raise @bitcore.GitError::InvalidObject("Missing commit object")
     Some(o) => {
       if o.obj_type != @bitcore.ObjectType::Commit {
         raise @bitcore.GitError::InvalidObject("Object is not a commit")
@@ -408,9 +402,7 @@ fn merge_tree_write_tree(
   for item in dir_map.to_array() {
     let (dir_name, sub_files) = item
     let sub_tree_id = merge_tree_write_tree(fs, git_dir, sub_files)
-    file_entries.push(
-      @bitcore.TreeEntry::new("40000", dir_name, sub_tree_id),
-    )
+    file_entries.push(@bitcore.TreeEntry::new("40000", dir_name, sub_tree_id))
   }
   // Sort entries by git tree sort order
   file_entries.sort_by(fn(a, b) {
@@ -444,7 +436,7 @@ fn merge_tree_mode_to_string(mode : Int) -> String {
       let buf = StringBuilder::new()
       let mut j = digits.length() - 1
       while j >= 0 {
-        buf.write_char(Char::from_int(digits[j].to_int()))
+        buf.write_char(digits[j].to_int().unsafe_to_char())
         j -= 1
       }
       buf.to_string()

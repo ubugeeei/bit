@@ -13,16 +13,10 @@ async fn handle_merge_base(args : Array[String]) -> Unit raise Error {
     let arg = args[i]
     match arg {
       "-h" | "--help" => {
-        print_line(
-          "usage: git merge-base [-a | --all] <commit> <commit>...",
-        )
-        print_line(
-          "   or: git merge-base [-a | --all] --octopus <commit>...",
-        )
+        print_line("usage: git merge-base [-a | --all] <commit> <commit>...")
+        print_line("   or: git merge-base [-a | --all] --octopus <commit>...")
         print_line("   or: git merge-base --is-ancestor <commit> <commit>")
-        print_line(
-          "   or: git merge-base --fork-point <ref> [<commit>]",
-        )
+        print_line("   or: git merge-base --fork-point <ref> [<commit>]")
         print_line("   or: git merge-base --independent <commit>...")
         return
       }
@@ -116,9 +110,7 @@ async fn handle_merge_base(args : Array[String]) -> Unit raise Error {
   }
   // Default: merge-base A B (or multiple commits with --all)
   if positional.length() < 2 {
-    eprint_line(
-      "usage: git merge-base [-a | --all] <commit> <commit>...",
-    )
+    eprint_line("usage: git merge-base [-a | --all] <commit> <commit>...")
     @sys.exit(129)
     return
   }
@@ -403,11 +395,7 @@ async fn merge_base_fork_point(
   } else {
     git_dir + "/logs/refs/heads/" + ref_name
   }
-  let data = try {
-    decode_bytes(fs.read_file(reflog_path))
-  } catch {
-    _ => return None
-  }
+  let data = decode_bytes(fs.read_file(reflog_path)) catch { _ => return None }
   // Parse reflog entries to get new OIDs
   let reflog_oids : Array[@bitcore.ObjectId] = []
   for line_view in data.split("\n") {
@@ -417,11 +405,7 @@ async fn merge_base_fork_point(
     }
     // Reflog format: <old-oid(40)> <new-oid(40)> <rest>
     let new_hex = String::unsafe_substring(line, start=41, end=81)
-    let oid = try {
-      @bitcore.ObjectId::from_hex(new_hex)
-    } catch {
-      _ => continue
-    }
+    let oid = @bitcore.ObjectId::from_hex(new_hex) catch { _ => continue }
     reflog_oids.push(oid)
   }
   // Find the best merge-base between commit and any reflog entry
