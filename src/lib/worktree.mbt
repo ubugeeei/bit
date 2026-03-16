@@ -1341,12 +1341,7 @@ fn write_tree_from_entries(
 
 ///|
 fn worktree_is_zero_object_id(id : @bit.ObjectId) -> Bool {
-  for b in id.bytes {
-    if b != b'\x00' {
-      return false
-    }
-  }
-  true
+  id.is_zero()
 }
 
 ///|
@@ -1390,34 +1385,7 @@ fn compare_strings_lexicographic(a : String, b : String) -> Int {
   }
 }
 
-///|
-fn mode_to_string(mode : Int) -> String {
-  if mode == default_file_mode() {
-    "100644"
-  } else {
-    to_octal_string(mode)
-  }
-}
-
-///|
-fn to_octal_string(value : Int) -> String {
-  if value == 0 {
-    return "0"
-  }
-  let digits : Array[Char] = []
-  let mut v = value
-  while v > 0 {
-    let d = v % 8
-    digits.push((d + '0'.to_int()).unsafe_to_char())
-    v = v / 8
-  }
-  let rev = digits.rev()
-  let sb = StringBuilder::new()
-  for c in rev {
-    sb.write_char(c)
-  }
-  sb.to_string()
-}
+// mode_to_string and to_octal_string are defined in string_utils.mbt
 
 ///|
 fn trim_worktree_text(s : String) -> String {

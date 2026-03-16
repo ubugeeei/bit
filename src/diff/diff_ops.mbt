@@ -404,12 +404,7 @@ fn diff_blob_short_id(data : Bytes) -> String {
 
 ///|
 fn diff_is_zero_oid(id : @bit.ObjectId) -> Bool {
-  for b in id.bytes {
-    if b != b'\x00' {
-      return false
-    }
-  }
-  true
+  id.is_zero()
 }
 
 ///|
@@ -996,37 +991,8 @@ fn is_gitlink_mode_int(mode : Int) -> Bool {
 }
 
 ///|
-fn default_file_mode() -> Int {
-  33188 // 0o100644
-}
-
-///|
 fn mode_to_string(mode : Int) -> String {
-  if mode == default_file_mode() {
-    "100644"
-  } else {
-    to_octal_string(mode)
-  }
-}
-
-///|
-fn to_octal_string(value : Int) -> String {
-  if value == 0 {
-    return "0"
-  }
-  let digits : Array[Char] = []
-  let mut v = value
-  while v > 0 {
-    let d = v % 8
-    digits.push((d + '0'.to_int()).unsafe_to_char())
-    v = v / 8
-  }
-  let rev = digits.rev()
-  let sb = StringBuilder::new()
-  for c in rev {
-    sb.write_char(c)
-  }
-  sb.to_string()
+  @bitlib.mode_to_string(mode)
 }
 
 ///|

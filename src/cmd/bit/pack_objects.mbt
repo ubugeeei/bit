@@ -3204,12 +3204,7 @@ async fn handle_pack_objects(args : Array[String]) -> Unit raise Error {
 
 ///|
 fn pack_objects_is_zero_oid(id : @bitcore.ObjectId) -> Bool {
-  for b in id.bytes {
-    if b != b'\x00' {
-      return false
-    }
-  }
-  true
+  id.is_zero()
 }
 
 ///|

@@ -324,12 +324,7 @@ fn diff_blob_short_id(data : Bytes) -> String {
 
 ///|
 fn diff_is_zero_oid(id : @bit.ObjectId) -> Bool {
-  for b in id.bytes {
-    if b != b'\x00' {
-      return false
-    }
-  }
-  true
+  id.is_zero()
 }
 
 ///|

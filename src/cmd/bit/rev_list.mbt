@@ -1155,7 +1155,7 @@ fn rev_list_tree_mode_to_int(mode : String) -> Int {
 
 ///|
 fn rev_list_is_zero_object_id_hex(hex : String) -> Bool {
-  hex == "0000000000000000000000000000000000000000"
+  @bitcore.ObjectId::is_zero_hex(hex)
 }
 
 ///|

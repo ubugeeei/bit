@@ -257,7 +257,7 @@ fn prepend_arg(first : String, rest : Array[String]) -> Array[String] {
 
 ///|
 fn decode_bytes(data : Bytes) -> String {
-  @encoding.decoder(@encoding.Encoding::UTF8).decode_lossy(data[:])
+  @bitlib.decode_bytes(data)
 }
 
 ///|

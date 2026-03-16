@@ -2,7 +2,7 @@
 
 ///|
 /// Helper to convert Array[Byte] to Bytes
-fn array_to_bytes(arr : Array[Byte]) -> Bytes {
+pub fn array_to_bytes(arr : Array[Byte]) -> Bytes {
   Bytes::from_iter(arr.iter())
 }
 

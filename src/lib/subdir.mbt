@@ -302,10 +302,7 @@ fn bytes_to_string(bytes : Bytes) -> String {
   result.to_string()
 }
 
-///|
-fn decode_bytes(data : Bytes) -> String {
-  bytes_to_string(data)
-}
+// decode_bytes is defined in string_utils.mbt
 
 ///|
 fn read_remote_url_from_config(

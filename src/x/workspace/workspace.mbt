@@ -17,7 +17,7 @@ async fn eprint_line(msg : String) -> Unit {
 
 ///|
 fn decode_bytes(data : Bytes) -> String {
-  @encoding.decoder(@encoding.Encoding::UTF8).decode_lossy(data[:])
+  @bitlib.decode_bytes(data)
 }
 
 ///|

@@ -335,9 +335,5 @@ pub fn stash_collect_paths(
 ///|
 /// Convert Int mode to String representation.
 pub fn stash_mode_str(mode : Int) -> String {
-  if mode == 0o100755 {
-    "100755"
-  } else {
-    "100644"
-  }
+  mode_to_string(mode)
 }

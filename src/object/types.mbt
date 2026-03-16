@@ -17,6 +17,17 @@ pub fn ObjectId::zero() -> ObjectId {
 }
 
 ///|
+/// Check if this ObjectId is the zero (null) object id.
+pub fn ObjectId::is_zero(self : ObjectId) -> Bool {
+  for b in self.bytes {
+    if b != b'\x00' {
+      return false
+    }
+  }
+  true
+}
+
+///|
 /// Convert ObjectId to Bytes (20 bytes) - zero-copy when possible
 pub fn ObjectId::to_bytes(self : ObjectId) -> Bytes {
   Bytes::from_array(self.bytes.iter().collect())
@@ -107,6 +118,12 @@ pub impl Eq for ObjectId with equal(self, other) {
     }
   }
   true
+}
+
+///|
+/// Check if a hex string represents the zero (null) object id.
+pub fn ObjectId::is_zero_hex(hex : String) -> Bool {
+  hex == "0000000000000000000000000000000000000000"
 }
 
 ///|

@@ -417,29 +417,5 @@ fn merge_tree_write_tree(
 
 ///|
 fn merge_tree_mode_to_string(mode : Int) -> String {
-  match mode {
-    0o100644 => "100644"
-    0o100755 => "100755"
-    0o120000 => "120000"
-    0o160000 => "160000"
-    0o40000 => "40000"
-    _ => {
-      let mut n = mode
-      let digits : Array[Byte] = []
-      if n == 0 {
-        return "0"
-      }
-      while n > 0 {
-        digits.push((n % 8).to_byte() + b'0')
-        n = n / 8
-      }
-      let buf = StringBuilder::new()
-      let mut j = digits.length() - 1
-      while j >= 0 {
-        buf.write_char(digits[j].to_int().unsafe_to_char())
-        j -= 1
-      }
-      buf.to_string()
-    }
-  }
+  @bitlib.mode_to_string(mode)
 }

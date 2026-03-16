@@ -44,7 +44,7 @@ pub(all) struct ConfigBlock {
 
 ///|
 fn decode_bytes_lossy(data : Bytes) -> String {
-  @utf8.decode_lossy(data[:])
+  decode_bytes(data)
 }
 
 ///|

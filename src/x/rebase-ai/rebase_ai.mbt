@@ -194,7 +194,7 @@ fn has_conflict_markers(content : String) -> Bool {
 
 ///|
 fn decode_bytes(data : Bytes) -> String {
-  @utf8.decode_lossy(data[:])
+  @bitlib.decode_bytes(data)
 }
 
 ///|

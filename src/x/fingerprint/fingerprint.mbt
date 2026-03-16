@@ -102,7 +102,7 @@ fn fingerprint_path_ignored(
 
 ///|
 fn decode_bytes(data : Bytes) -> String {
-  @utf8.decode_lossy(data[:])
+  @bitlib.decode_bytes(data)
 }
 
 ///|

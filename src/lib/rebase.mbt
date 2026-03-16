@@ -775,31 +775,7 @@ fn rebase_split_first(path : String) -> (String, String?) {
 
 ///|
 fn rebase_mode_to_string(mode : Int) -> String {
-  if mode == 33188 {
-    "100644"
-  } else {
-    rebase_to_octal_string(mode)
-  }
-}
-
-///|
-fn rebase_to_octal_string(value : Int) -> String {
-  if value == 0 {
-    return "0"
-  }
-  let digits : Array[Char] = []
-  let mut v = value
-  while v > 0 {
-    let d = v % 8
-    digits.push((d + '0'.to_int()).unsafe_to_char())
-    v = v / 8
-  }
-  let rev = digits.rev()
-  let sb = StringBuilder::new()
-  for c in rev {
-    sb.write_char(c)
-  }
-  sb.to_string()
+  mode_to_string(mode)
 }
 
 ///|
