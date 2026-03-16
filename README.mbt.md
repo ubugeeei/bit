@@ -50,7 +50,7 @@ bit push origin feature
 - Git config: reads global aliases from `~/.gitconfig` (or `GIT_CONFIG_GLOBAL`) only.
 - Shell aliases (prefixed with `!`) are not supported.
 
-### Implemented Commands (103)
+### Implemented Commands (108)
 
 ```
 init add diff diff-files diff-index ls-files tag branch checkout switch
@@ -66,6 +66,7 @@ send-pack request-pull merge-base var stripspace ls-remote fmt-merge-msg
 patch-id count-objects name-rev update-server-info check-ref-format mktag
 interpret-trailers column merge-tree merge-file fast-import fast-export
 verify-tag fetch-pack credential difftool rerere mailinfo archive
+check-attr check-ignore show-index get-tar-commit-id verify-commit annotate
 ```
 
 ### Git-Compat Test Results

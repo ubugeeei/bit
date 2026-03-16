@@ -2,15 +2,15 @@
 
 最終整理日: 2026-03-16
 方針: 完了ログは一旦外し、未完了タスクのみ管理する。
-現バージョン: v0.30.0
+現バージョン: v0.31.0
 allowlist: 908 テスト（重複除去済み）
-CI SHIM_CMDS: **103 コマンド**
+CI SHIM_CMDS: **108 コマンド**
 CI unit test: **1637/1637 全パス** (2026-03-16)
 e2e: **30/30 全パス** (2026-03-16)
 
 ## P0: Git compatibility
 
-### 実装済みコマンド (103 SHIM_CMDS)
+### 実装済みコマンド (108 SHIM_CMDS)
 
 ```
 init add diff diff-files diff-index ls-files tag branch checkout switch
@@ -25,7 +25,8 @@ maintenance range-diff show-branch repack multi-pack-index pack-redundant
 send-pack request-pull merge-base var stripspace ls-remote fmt-merge-msg
 patch-id count-objects name-rev update-server-info check-ref-format mktag
 interpret-trailers column merge-tree merge-file fast-import fast-export
-verify-tag fetch-pack credential difftool rerere mailinfo archive
+verify-tag fetch-pack difftool rerere mailinfo archive check-attr
+check-ignore show-index get-tar-commit-id verify-commit annotate
 ```
 
 ### スコープ外コマンド
