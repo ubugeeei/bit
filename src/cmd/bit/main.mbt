@@ -1374,6 +1374,7 @@ async fn dispatch_known_command(
     "check-mailmap" => handle_check_mailmap(rest)
     "unpack-file" => handle_unpack_file(rest)
     "web--browse" => handle_web_browse(rest)
+    "filter-branch" => handle_filter_branch(rest)
     "version" => print_line("git version \{bit_version_tag}")
     // Error for unknown commands
     _ => {

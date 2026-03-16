@@ -113,6 +113,7 @@ options(
     "fetch_serve_js.mbt": [ "js" ],
     "fetch_serve_native.mbt": [ "native" ],
     "fetch_wbtest.mbt": [ "native" ],
+    "filter_branch.mbt": [ "native" ],
     "fmt_merge_msg.mbt": [ "native" ],
     "for_each_ref.mbt": [ "native" ],
     "format_patch.mbt": [ "native" ],
