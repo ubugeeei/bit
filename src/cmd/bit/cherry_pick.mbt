@@ -9,23 +9,6 @@ fn cherry_pick_is_positional_arg(arg : String) -> Bool {
 }
 
 ///|
-async fn delegate_cherry_pick_to_real_git(args : Array[String]) -> Unit {
-  let argv = ["cherry-pick"]
-  for arg in args {
-    argv.push(arg)
-  }
-  let code = @process.run(
-    resolve_real_git_for_dispatch(),
-    argv,
-    inherit_env=true,
-    stdin=@stdio.stdin,
-    stdout=@stdio.stdout,
-    stderr=@stdio.stderr,
-  )
-  @sys.exit(code)
-}
-
-///|
 fn cherry_pick_collect_linear_replay_commits(
   rfs : &@bitcore.RepoFileSystem,
   git_dir : String,
@@ -113,11 +96,9 @@ async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
     }
     @sys.exit(1)
   }
-  if subdir_info is None && commit_spec is None {
-    delegate_cherry_pick_to_real_git(args)
-  }
   guard commit_spec is Some(spec) else {
-    raise @bitcore.GitError::InvalidObject("commit required")
+    eprint_line("error: cherry-pick requires a commit argument")
+    @sys.exit(1)
   }
   match subdir_info {
     Some((_, subdir_path, _)) => {
@@ -128,13 +109,14 @@ async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
     }
     None => ()
   }
-  if subdir_info is None && spec == "-" {
-    delegate_cherry_pick_to_real_git(args)
-  }
+  // "-" means previous branch's HEAD — resolve via @{-1}
+  let effective_spec = if spec == "-" { "@{-1}" } else { spec }
   // Resolve commit
-  let commit_id = @bitrepo.rev_parse(fs, git_dir, spec)
+  let commit_id = @bitrepo.rev_parse(fs, git_dir, effective_spec)
   guard commit_id is Some(cid) else {
-    raise @bitcore.GitError::InvalidObject("unknown revision: \{spec}")
+    raise @bitcore.GitError::InvalidObject(
+      "unknown revision: \{effective_spec}",
+    )
   }
   // Validate the commit object
   if subdir_info is None {

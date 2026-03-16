@@ -1,37 +1,6 @@
 ///|
-async fn delegate_merge_to_real_git(args : Array[String], cwd : String) -> Unit {
-  let argv : Array[String] = ["merge"]
-  for arg in args {
-    argv.push(arg)
-  }
-  let code = @process.run(
-    resolve_real_git_for_dispatch(),
-    argv,
-    inherit_env=true,
-    cwd~,
-    stdin=@stdio.stdin,
-    stdout=@stdio.stdout,
-    stderr=@stdio.stderr,
-  )
-  @sys.exit(code)
-}
-
-///|
-fn merge_need_real_git(_args : Array[String]) -> Bool {
-  // We now handle --allow-unrelated-histories, -s ours, and strategy args
-  // natively. Only delegate for octopus merges (>1 head) which we don't
-  // implement.
-  false
-}
-
-///|
 async fn handle_merge(args : Array[String]) -> Unit raise Error {
   let root = get_work_root()
-  let cwd = root
-  if merge_need_real_git(args) {
-    delegate_merge_to_real_git(args, cwd)
-    return
-  }
   let fs = OsFs::new()
   let rfs : &@bitcore.RepoFileSystem = fs
   check_and_exit_unsupported_attrs(root)
@@ -275,10 +244,7 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
   guard target_id is Some(tid) else {
     raise @bitcore.GitError::InvalidObject("unknown revision: \{refspec}")
   }
-  if merge_target_requires_real_git(rfs, git_dir, tid) {
-    delegate_merge_to_real_git(args, cwd)
-    return
-  }
+  ignore(rfs) // merge commit targets handled natively
   let author = get_author_string()
   let timestamp = get_commit_timestamp()
   let msg = message.unwrap_or("Merge \{refspec}")
@@ -485,23 +451,6 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
       }
       @sys.exit(1)
     }
-  }
-}
-
-///|
-fn merge_target_requires_real_git(
-  rfs : &@bitcore.RepoFileSystem,
-  git_dir : String,
-  target_id : @bitcore.ObjectId,
-) -> Bool {
-  try {
-    match @bitlib.ObjectDb::load_lazy(rfs, git_dir).get(rfs, target_id) {
-      Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit =>
-        @bitcore.parse_commit(obj.data).parents.length() > 1
-      _ => false
-    }
-  } catch {
-    _ => false
   }
 }
 

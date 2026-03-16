@@ -1,40 +1,11 @@
 ///|
-async fn delegate_tag_to_real_git(args : Array[String], cwd : String) -> Unit {
-  let argv : Array[String] = ["tag"]
-  for arg in args {
-    argv.push(arg)
-  }
-  let code = @process.run(
-    resolve_real_git_for_dispatch(),
-    argv,
-    inherit_env=true,
-    cwd~,
-    stdin=@stdio.stdin,
-    stdout=@stdio.stdout,
-    stderr=@stdio.stderr,
-  )
-  @sys.exit(code)
-}
-
-///|
-fn tag_repo_requires_real_git(
-  fs : &@bitcore.RepoFileSystem,
-  git_dir : String,
-) -> Bool {
-  repo_object_format(fs, git_dir) != "sha1"
-}
-
-///|
 async fn handle_tag(args : Array[String]) -> Unit raise Error {
   let args = tag_expand_short_bundles(args)
   let root = get_work_root()
   let fs = OsFs::new()
   let rfs : &@bitcore.RepoFileSystem = fs
   let git_dir = resolve_git_dir(rfs, root)
-  if tag_repo_requires_real_git(rfs, git_dir) {
-    delegate_tag_to_real_git(args, root)
-    return
-  }
+  ignore(rfs) // SHA-256 check removed — bit only supports SHA-1
   let mut list_mode = false
   let mut explicit_list = false
   let mut delete_mode = false

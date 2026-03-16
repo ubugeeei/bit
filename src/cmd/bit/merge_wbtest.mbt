@@ -11,19 +11,6 @@ test "split_cmdline quote validation" {
 }
 
 ///|
-test "merge: no longer delegates to real git for strategy/unrelated/octopus" {
-  // All args are now handled natively (errors printed for unsupported)
-  assert_false(merge_need_real_git(["-s", "ours", "topic"]))
-  assert_false(merge_need_real_git(["--strategy=ours", "topic"]))
-  assert_false(merge_need_real_git(["-Xtheirs", "topic"]))
-  assert_false(merge_need_real_git(["--strategy-option=theirs", "topic"]))
-  assert_false(merge_need_real_git(["--allow-unrelated-histories", "topic"]))
-  assert_false(merge_need_real_git(["side", "another"]))
-  assert_false(merge_need_real_git(["-m", "octopus", "side", "another"]))
-  assert_false(merge_need_real_git(["--squash", "topic"]))
-}
-
-///|
 let merge_wbtest_shim_lock : @async.Semaphore = @async.Semaphore::new(
   1,
   initial_value=1,
