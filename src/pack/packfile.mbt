@@ -15,8 +15,23 @@ fn compress_pack_data(
   match compression {
     @bit.PackCompression::Stored => @zlib.zlib_compress_stored(data)
     @bit.PackCompression::Default => {
-      let compressed = @zlib.zlib_compress(data)
-      if compressed.length() > data.length() {
+      // Use fixed Huffman (fast) for pack data, matching git's default level 1
+      let deflated = @zlib.deflate_compress_fixed(data)
+      let total_len = 2 + deflated.length() + 4
+      let result : FixedArray[Byte] = FixedArray::make(total_len, b'\x00')
+      result[0] = b'\x78' // CMF: deflate, window=32K
+      result[1] = b'\x01' // FLG: level 0-1
+      for i in 0..<deflated.length() {
+        result[2 + i] = deflated[i]
+      }
+      let checksum = @zlib.adler32(data)
+      // big-endian adler32
+      result[total_len - 4] = ((checksum >> 24) & 0xFF).to_byte()
+      result[total_len - 3] = ((checksum >> 16) & 0xFF).to_byte()
+      result[total_len - 2] = ((checksum >> 8) & 0xFF).to_byte()
+      result[total_len - 1] = (checksum & 0xFF).to_byte()
+      let compressed = Bytes::from_array(result)
+      if compressed.length() > data.length() + 11 {
         @zlib.zlib_compress_stored(data)
       } else {
         compressed
@@ -357,6 +372,11 @@ fn build_delta_with_index(
 fn build_delta(base : Bytes, target : Bytes) -> Bytes {
   let (index, base_pow) = build_block_index(base, delta_block_size)
   build_delta_with_index(base, target, index, base_pow)
+}
+
+///|
+pub fn build_delta_pub(base : Bytes, target : Bytes) -> Bytes {
+  build_delta(base, target)
 }
 
 ///|
