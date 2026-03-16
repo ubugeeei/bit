@@ -31,7 +31,9 @@ async fn handle_merge_one_file(args : Array[String]) -> Unit raise Error {
   if our_hash.length() == 0 && their_hash.length() == 0 {
     // Both sides deleted
     let full_path = root + "/" + path
-    @fs.remove_file(full_path) catch { _ => () }
+    @fs.remove_file(full_path) catch {
+      _ => ()
+    }
     return
   }
   if our_hash.length() == 0 {
@@ -86,7 +88,7 @@ async fn handle_merge_one_file(args : Array[String]) -> Unit raise Error {
 ///|
 fn merge_one_file_load_dbs(
   fs : OsFs,
-  git_dir : String
+  git_dir : String,
 ) -> Array[@bitlib.ObjectDb] {
   let out : Array[@bitlib.ObjectDb] = []
   let objects_dir = git_dir + "/objects"
@@ -102,7 +104,7 @@ fn merge_one_file_load_dbs(
 fn merge_one_file_read_blob(
   dbs : Array[@bitlib.ObjectDb],
   fs : OsFs,
-  oid_str : String
+  oid_str : String,
 ) -> String raise Error {
   let id = @bitcore.ObjectId::from_hex(oid_str)
   for db in dbs {

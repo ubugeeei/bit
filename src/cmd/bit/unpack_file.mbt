@@ -63,15 +63,14 @@ async fn handle_unpack_file(args : Array[String]) -> Unit raise Error {
 }
 
 ///|
-fn unpack_file_load_dbs(
-  fs : OsFs,
-  git_dir : String,
-) -> Array[@bitlib.ObjectDb] {
+fn unpack_file_load_dbs(fs : OsFs, git_dir : String) -> Array[@bitlib.ObjectDb] {
   let out : Array[@bitlib.ObjectDb] = []
   let primary = @bitlib.ObjectDb::load_lazy_from_objects_dir(
     fs,
     git_dir + "/objects",
-  ) catch { _ => return out }
+  ) catch {
+    _ => return out
+  }
   primary.set_skip_verify(true)
   out.push(primary)
   // Check alternates

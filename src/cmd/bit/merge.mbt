@@ -17,55 +17,10 @@ async fn delegate_merge_to_real_git(args : Array[String], cwd : String) -> Unit 
 }
 
 ///|
-fn merge_count_merge_heads(args : Array[String]) -> Int {
-  let mut count = 0
-  let mut i = 0
-  while i < args.length() {
-    let arg = args[i]
-    match arg {
-      "-m" | "--message" | "-s" | "--strategy" | "-X" | "--strategy-option" => {
-        i += 2
-        continue
-      }
-      _ if arg.has_prefix("--message=") ||
-        arg.has_prefix("--strategy=") ||
-        arg.has_prefix("--strategy-option=") ||
-        (arg.has_prefix("-m") && not(arg.has_prefix("--")) && arg.length() > 2) ||
-        (arg.has_prefix("-X") && not(arg.has_prefix("--")) && arg.length() > 2) ||
-        (arg.has_prefix("-s") && not(arg.has_prefix("--")) && arg.length() > 2) =>
-        ()
-      "--no-ff"
-      | "--ff-only"
-      | "--squash"
-      | "--abort"
-      | "--continue"
-      | "--allow-unrelated-histories" => ()
-      _ if not(arg.has_prefix("-")) => count += 1
-      _ => ()
-    }
-    i += 1
-  }
-  count
-}
-
-///|
-fn merge_need_real_git(args : Array[String]) -> Bool {
-  if merge_count_merge_heads(args) > 1 {
-    return true
-  }
-  for arg in args {
-    if arg == "-s" ||
-      arg == "--strategy" ||
-      arg == "-X" ||
-      arg == "--strategy-option" ||
-      arg == "--allow-unrelated-histories" ||
-      arg.has_prefix("--strategy=") ||
-      arg.has_prefix("--strategy-option=") ||
-      (arg.has_prefix("-X") && not(arg.has_prefix("--")) && arg.length() > 2) ||
-      (arg.has_prefix("-s") && not(arg.has_prefix("--")) && arg.length() > 2) {
-      return true
-    }
-  }
+fn merge_need_real_git(_args : Array[String]) -> Bool {
+  // We now handle --allow-unrelated-histories, -s ours, and strategy args
+  // natively. Only delegate for octopus merges (>1 head) which we don't
+  // implement.
   false
 }
 
@@ -82,7 +37,6 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
   check_and_exit_unsupported_attrs(root)
   let git_dir = root + "/.git"
   let wfs : &@bitcore.FileSystem = fs
-  let mut target_ref : String? = None
   let mut message : String? = None
   let mut no_ff = false
   let mut ff_only = false
@@ -90,6 +44,9 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
   let mut quiet = false
   let mut abort_merge = false
   let mut continue_merge = false
+  let mut allow_unrelated = false
+  let mut strategy : String? = None
+  let merge_heads : Array[String] = []
   let mut i = 0
   while i < args.length() {
     let arg = args[i]
@@ -110,7 +67,7 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
         raise @bitcore.GitError::InvalidObject(
           "option '--message' requires a value",
         )
-      _ if arg.has_prefix("-m") => {
+      _ if arg.has_prefix("-m") && not(arg.has_prefix("--")) => {
         message = Some(string_slice_from(arg, 2))
         i += 1
         continue
@@ -150,18 +107,77 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
         i += 1
         continue
       }
-      _ if not(arg.has_prefix("-")) =>
-        match target_ref {
-          Some(_) =>
-            raise @bitcore.GitError::InvalidObject(
-              "multiple merge heads are not supported",
-            )
-          None => target_ref = Some(arg)
+      "--allow-unrelated-histories" => {
+        allow_unrelated = true
+        i += 1
+        continue
+      }
+      "-s" if i + 1 < args.length() => {
+        strategy = Some(args[i + 1])
+        i += 2
+        continue
+      }
+      "--strategy" if i + 1 < args.length() => {
+        strategy = Some(args[i + 1])
+        i += 2
+        continue
+      }
+      _ if arg.has_prefix("--strategy=") => {
+        strategy = Some(string_slice_from(arg, 11))
+        i += 1
+        continue
+      }
+      _ if arg.has_prefix("-s") && not(arg.has_prefix("--")) && arg.length() > 2 => {
+        strategy = Some(string_slice_from(arg, 2))
+        i += 1
+        continue
+      }
+      "-X" | "--strategy-option" => {
+        // Strategy options: skip the value but warn
+        if i + 1 < args.length() {
+          i += 2
+        } else {
+          i += 1
         }
+        // Strategy options are silently ignored for now
+        continue
+      }
+      _ if arg.has_prefix("--strategy-option=") ||
+        (arg.has_prefix("-X") && not(arg.has_prefix("--")) && arg.length() > 2) => {
+        // Strategy options: silently ignored
+        i += 1
+        continue
+      }
+      _ if not(arg.has_prefix("-")) => {
+        merge_heads.push(arg)
+        i += 1
+        continue
+      }
       _ if arg.has_prefix("-") => warn_unimplemented_arg("merge", arg)
       _ => ()
     }
     i += 1
+  }
+  // Handle octopus merge (>1 head): print clear error
+  if merge_heads.length() > 1 {
+    @stdio.stderr.write(
+      "error: merge: octopus merge (multiple merge heads) is not supported\n",
+    )
+    @sys.exit(1)
+  }
+  // Validate strategy
+  match strategy {
+    Some(s) =>
+      if s != "ours" && s != "recursive" && s != "ort" && s != "resolve" {
+        @stdio.stderr.write("error: merge: unknown strategy '\{s}'\n")
+        @sys.exit(1)
+      }
+    None => ()
+  }
+  let target_ref : String? = if merge_heads.length() == 1 {
+    Some(merge_heads[0])
+  } else {
+    None
   }
   // Handle --abort
   if abort_merge {
@@ -266,6 +282,53 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
   let author = get_author_string()
   let timestamp = get_commit_timestamp()
   let msg = message.unwrap_or("Merge \{refspec}")
+  // Handle -s ours: keep our tree, create merge commit
+  if strategy is Some(s) && s == "ours" {
+    let head_id = @bitrepo.rev_parse(rfs, git_dir, "HEAD")
+    guard head_id is Some(hid) else {
+      raise @bitcore.GitError::InvalidObject("Cannot resolve HEAD")
+    }
+    let db = @bitlib.ObjectDb::load(rfs, git_dir)
+    let head_obj = db.get(rfs, hid)
+    guard head_obj is Some(ho) else {
+      raise @bitcore.GitError::InvalidObject("Cannot read HEAD commit")
+    }
+    let head_info = @bitcore.parse_commit(ho.data)
+    let tree_id = head_info.tree
+    let commit = @bitcore.Commit::new(
+      tree_id,
+      [hid, tid],
+      author,
+      timestamp,
+      "+0000",
+      author,
+      timestamp,
+      "+0000",
+      msg + "\n",
+    )
+    let (commit_id, commit_data) = @bitcore.create_commit(commit)
+    @bitlib.write_object_bytes(wfs, git_dir, commit_id, commit_data)
+    let head_path = git_dir + "/HEAD"
+    let head_content = rfs.read_file(head_path) |> decode_bytes |> trim_string
+    if head_content.has_prefix("ref: ") {
+      let ref_path = git_dir +
+        "/" +
+        String::unsafe_substring(
+          head_content,
+          start=5,
+          end=head_content.length(),
+        )
+      wfs.write_string(ref_path, commit_id.to_hex() + "\n")
+    } else {
+      wfs.write_string(head_path, commit_id.to_hex() + "\n")
+    }
+    let short = String::unsafe_substring(commit_id.to_hex(), start=0, end=7)
+    if not(quiet) {
+      print_line("Merge made by the 'ours' strategy. [\{short}]")
+    }
+    ignore(allow_unrelated)
+    return
+  }
   // Handle --squash
   if squash {
     // Squash merge: apply changes but don't commit
@@ -381,7 +444,9 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
     }
     return
   }
-  // Regular merge
+  // Regular merge (strategy=recursive/ort/resolve or no strategy specified)
+  ignore(allow_unrelated)
+  ignore(strategy)
   let result = run_merge_with_sensitive_hooks(
     fs, fs, root, tid, msg, author, timestamp,
   )

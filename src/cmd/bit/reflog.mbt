@@ -300,7 +300,9 @@ async fn handle_reflog(args : Array[String]) -> Unit raise Error {
             return
           }
           let n_str = String::unsafe_substring(
-            ref_arg, start=at_idx + 2, end=close_idx,
+            ref_arg,
+            start=at_idx + 2,
+            end=close_idx,
           )
           let n = @strconv.parse_int(n_str) catch {
             _ => {

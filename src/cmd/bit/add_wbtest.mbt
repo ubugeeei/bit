@@ -1,34 +1,4 @@
 ///|
-test "add: sha256 repository requires real git fallback" {
-  let fs = @bitcore.TestFs::new()
-  fs.mkdir_p("/repo/.git")
-  fs.write_string(
-    "/repo/.git/config", "[extensions]\n\tobjectformat = sha256\n",
-  )
-  assert_true(add_repo_requires_real_git(fs, "/repo/.git"))
-
-  fs.write_string(
-    "/repo/.git/config", "[core]\n\trepositoryformatversion = 0\n",
-  )
-  assert_false(add_repo_requires_real_git(fs, "/repo/.git"))
-}
-
-///|
-test "add: compatobjectformat=sha256 does not require real git fallback" {
-  let fs = @bitcore.TestFs::new()
-  fs.mkdir_p("/repo/.git")
-  fs.write_string(
-    "/repo/.git/config", "[extensions]\n\tcompatobjectformat = sha256\n",
-  )
-  assert_false(add_repo_requires_real_git(fs, "/repo/.git"))
-
-  fs.write_string(
-    "/repo/.git/config", "[extensions]\n\tcompatobjectformat = sha1\n",
-  )
-  assert_false(add_repo_requires_real_git(fs, "/repo/.git"))
-}
-
-///|
 test "add: storage runtime routing only for add-all without pathspecs" {
   assert_true(add_should_use_storage_runtime(["-A"]))
   assert_true(add_should_use_storage_runtime(["--all"]))

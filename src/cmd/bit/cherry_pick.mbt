@@ -1,6 +1,6 @@
 ///|
 fn cherry_pick_is_supported_noop_arg(arg : String) -> Bool {
-  arg == "-3" || arg == "--3way"
+  arg == "-3" || arg == "--3way" || arg == "--ff"
 }
 
 ///|
@@ -73,6 +73,9 @@ async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
   let mut do_abort = false
   let mut use_threeway = false
   let mut allow_empty = false
+  let mut no_commit = false
+  let mut signoff = false
+  let mut add_cherry_pick_note = false
   let unsupported_args : Array[String] = []
   // Parse arguments
   let mut commit_spec : String? = None
@@ -85,6 +88,12 @@ async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
       do_abort = true
     } else if arg == "--allow-empty" {
       allow_empty = true
+    } else if arg == "-n" || arg == "--no-commit" {
+      no_commit = true
+    } else if arg == "-s" || arg == "--signoff" {
+      signoff = true
+    } else if arg == "-x" {
+      add_cherry_pick_note = true
     } else if cherry_pick_is_supported_noop_arg(arg) {
       use_threeway = true
     } else {
@@ -98,14 +107,14 @@ async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
   }
   // Check if subdir-clone and handle specially
   let subdir_info = get_subdir_info(fs, git_dir)
-  if subdir_info is None && unsupported_args.length() > 0 {
-    delegate_cherry_pick_to_real_git(args)
+  if unsupported_args.length() > 0 {
+    for arg in unsupported_args {
+      @stdio.stderr.write("error: cherry-pick: unsupported option '\{arg}'\n")
+    }
+    @sys.exit(1)
   }
   if subdir_info is None && commit_spec is None {
     delegate_cherry_pick_to_real_git(args)
-  }
-  for arg in unsupported_args {
-    warn_unimplemented_arg("cherry-pick", arg)
   }
   guard commit_spec is Some(spec) else {
     raise @bitcore.GitError::InvalidObject("commit required")
@@ -127,6 +136,7 @@ async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
   guard commit_id is Some(cid) else {
     raise @bitcore.GitError::InvalidObject("unknown revision: \{spec}")
   }
+  // Validate the commit object
   if subdir_info is None {
     let db = @bitlib.ObjectDb::load(rfs, git_dir)
     let commit_obj = db.get(rfs, cid)
@@ -135,14 +145,6 @@ async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
     }
     if obj.obj_type != @bitcore.ObjectType::Commit {
       raise @bitcore.GitError::InvalidObject("Not a commit")
-    }
-    let commit_info = @bitcore.parse_commit(obj.data)
-    let head = @bitlib.resolve_head_commit(rfs, git_dir)
-    let can_use_builtin = not(use_threeway) &&
-      head is None &&
-      commit_info.parents.length() == 0
-    if not(can_use_builtin) {
-      delegate_cherry_pick_to_real_git(args)
     }
   }
   let commit_ids : Array[@bitcore.ObjectId] = []
@@ -172,6 +174,13 @@ async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
   let author = get_author_string()
   let timestamp = get_commit_timestamp()
   for current_id in commit_ids {
+    // Build message suffix for -x flag
+    let message_suffix = if add_cherry_pick_note {
+      "(cherry picked from commit \{current_id.to_hex()})"
+    } else {
+      ""
+    }
+    let signoff_committer = if signoff { get_committer_string() } else { "" }
     let result = @bitlib.cherry_pick(
       fs,
       fs,
@@ -180,6 +189,9 @@ async fn handle_cherry_pick(args : Array[String]) -> Unit raise Error {
       author,
       timestamp,
       allow_empty~,
+      no_commit~,
+      message_suffix~,
+      signoff_committer~,
     )
     match result.status {
       @bitlib.CherryPickStatus::Success =>

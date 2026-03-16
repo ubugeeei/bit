@@ -278,8 +278,8 @@ fn find_best_match(
     if ok {
       let mut len = block_size
       while target_pos + len < target.length() &&
-        off + len < base.length() &&
-        base[off + len] == target[target_pos + len] {
+            off + len < base.length() &&
+            base[off + len] == target[target_pos + len] {
         len += 1
       }
       if len > best_len {

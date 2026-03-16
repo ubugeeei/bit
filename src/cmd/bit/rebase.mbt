@@ -174,7 +174,8 @@ async fn handle_rebase(args : Array[String]) -> Unit raise Error {
         }
         @bitlib.rebase_start_with_onto(fs, fs, root, oid, id, force_rebase~)
       }
-      None => @bitlib.rebase_start_with_onto(fs, fs, root, id, id, force_rebase~)
+      None =>
+        @bitlib.rebase_start_with_onto(fs, fs, root, id, id, force_rebase~)
     }
     print_rebase_result(result)
   }

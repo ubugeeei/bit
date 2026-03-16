@@ -1,23 +1,5 @@
 ///|
-async fn delegate_revert_to_real_git(args : Array[String]) -> Unit {
-  let argv = ["revert"]
-  for arg in args {
-    argv.push(arg)
-  }
-  let code = @process.run(
-    resolve_real_git_for_dispatch(),
-    argv,
-    inherit_env=true,
-    stdin=@stdio.stdin,
-    stdout=@stdio.stdout,
-    stderr=@stdio.stderr,
-  )
-  @sys.exit(code)
-}
-
-///|
 async fn handle_revert(args : Array[String]) -> Unit raise Error {
-  delegate_revert_to_real_git(args)
   let root = get_work_root()
   let git_dir = root + "/.git"
   let fs = OsFs::new()

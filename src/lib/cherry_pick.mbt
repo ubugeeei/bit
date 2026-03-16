@@ -23,6 +23,9 @@ pub fn cherry_pick(
   author : String,
   timestamp : Int64,
   allow_empty? : Bool = false,
+  no_commit? : Bool = false,
+  message_suffix? : String = "",
+  signoff_committer? : String = "",
 ) -> CherryPickResult raise @bit.GitError {
   let git_dir = join_path(root, ".git")
   let db = ObjectDb::load(rfs, git_dir)
@@ -35,7 +38,18 @@ pub fn cherry_pick(
     raise @bit.GitError::InvalidObject("Not a commit")
   }
   let commit_info = @bit.parse_commit(obj.data)
-  let message = cherry_pick_extract_message(obj.data, commit_id)
+  let raw_message = cherry_pick_extract_message(obj.data, commit_id)
+  let msg_with_suffix = if message_suffix.length() > 0 {
+    let trimmed = cherry_pick_trim_trailing_newlines(raw_message)
+    trimmed + "\n" + message_suffix + "\n"
+  } else {
+    raw_message
+  }
+  let message = if signoff_committer.length() > 0 {
+    commit_apply_signoff(msg_with_suffix, committer=signoff_committer)
+  } else {
+    msg_with_suffix
+  }
   let head = resolve_head_commit(rfs, git_dir)
   if head is None {
     if commit_info.parents.length() == 0 {
@@ -168,6 +182,13 @@ pub fn cherry_pick(
     write_index_entries(fs, git_dir, result_entries)
     return { status: CherryPickStatus::Conflict, commit_id: None, conflicts }
   }
+  if no_commit {
+    // Apply changes to worktree and index but skip creating a commit
+    write_worktree_from_files(db, fs, rfs, root, git_dir, result_files)
+    let result_entries = tree_files_to_index(db, rfs, result_files)
+    write_index_entries(fs, git_dir, result_entries)
+    return { status: CherryPickStatus::Success, commit_id: None, conflicts: [] }
+  }
   cherry_pick_write_result_commit(
     db,
     fs,
@@ -225,4 +246,18 @@ fn cherry_pick_write_result_commit(
   update_head_ref(fs, rfs, git_dir, new_id)
   write_worktree_from_files(db, fs, rfs, root, git_dir, result_files)
   { status: CherryPickStatus::Success, commit_id: Some(new_id), conflicts: [] }
+}
+
+///|
+fn cherry_pick_trim_trailing_newlines(s : String) -> String {
+  let chars = s.to_array()
+  let mut end = chars.length()
+  while end > 0 && (chars[end - 1] == '\n' || chars[end - 1] == '\r') {
+    end -= 1
+  }
+  let result = StringBuilder::new()
+  for i in 0..<end {
+    result.write_char(chars[i])
+  }
+  result.to_string()
 }

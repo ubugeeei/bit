@@ -13,11 +13,10 @@ async fn handle_web_browse(args : Array[String]) -> Unit raise Error {
         )
         return
       }
-      _ if arg.has_prefix("--browser=") => {
+      _ if arg.has_prefix("--browser=") =>
         browser_cmd = Some(
           String::unsafe_substring(arg, start=10, end=arg.length()),
         )
-      }
       "-b" => ()
       _ if arg.has_prefix("-") => warn_unimplemented_arg("web--browse", arg)
       _ => urls.push(arg)

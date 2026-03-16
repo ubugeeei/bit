@@ -28,10 +28,9 @@ async fn handle_mailsplit(args : Array[String]) -> Unit raise Error {
           }
         }
       }
-      "-d" => {
+      "-d" =>
         // -d<N> number of digits, ignore (we always use 4)
         i += 1
-      }
       _ if arg.has_prefix("-d") => () // -d<N> combined form
       "--" => {
         i += 1

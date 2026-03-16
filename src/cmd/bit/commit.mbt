@@ -14,27 +14,6 @@ fn commit_need_real_git() -> Bool {
 }
 
 ///|
-async fn delegate_commit_to_real_git(
-  args : Array[String],
-  cwd : String,
-) -> Unit {
-  let argv : Array[String] = ["commit"]
-  for arg in args {
-    argv.push(arg)
-  }
-  let code = @process.run(
-    resolve_real_git_for_dispatch(),
-    argv,
-    inherit_env=true,
-    cwd~,
-    stdin=@stdio.stdin,
-    stdout=@stdio.stdout,
-    stderr=@stdio.stderr,
-  )
-  @sys.exit(code)
-}
-
-///|
 fn commit_storage_runtime_parsed_args(
   args : Array[String],
 ) -> @runtime.StorageCommitArgs? {
@@ -108,10 +87,7 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
   let fs = OsFs::new()
   let rfs : &@bitcore.RepoFileSystem = fs
   let git_dir = resolve_git_dir(rfs, root)
-  if commit_repo_requires_real_git(rfs, git_dir) {
-    delegate_commit_to_real_git(args, root)
-    return
-  }
+
   if commit_args_require_standalone_error(args) {
     eprint_line("fatal: this commit mode is not supported in standalone mode")
     @sys.exit(1)
@@ -557,15 +533,6 @@ async fn handle_commit(args : Array[String]) -> Unit raise Error {
   if pathspecs.length() > 0 && only_mode {
     commit_restore_index_backup(fs, git_dir)
   }
-}
-
-///|
-fn commit_repo_requires_real_git(
-  fs : &@bitcore.RepoFileSystem,
-  git_dir : String,
-) -> Bool {
-  // Only check primary object format; compat format is informational
-  repo_object_format(fs, git_dir) != "sha1"
 }
 
 ///|

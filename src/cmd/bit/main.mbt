@@ -461,8 +461,7 @@ fn show_command_help_specs() -> Array[(String, String, String)] {
       "Extracts patch and authorship from a single e-mail message.",
     ),
     (
-      "mailsplit", "git mailsplit [-o<dir>] [-b] [--] <mbox>...",
-      "Split mbox file into individual messages.",
+      "mailsplit", "git mailsplit [-o<dir>] [-b] [--] <mbox>...", "Split mbox file into individual messages.",
     ),
     (
       "merge-index", "git merge-index [-o] [-q] <merge-program> (-a | <file>...)",
@@ -473,24 +472,20 @@ fn show_command_help_specs() -> Array[(String, String, String)] {
       "Standard merge helper for merge-index.",
     ),
     (
-      "http-fetch", "git http-fetch [-v] [-w <filename>] <commit-id> <url>",
-      "Download objects from a remote repository via dumb HTTP.",
+      "http-fetch", "git http-fetch [-v] [-w <filename>] <commit-id> <url>", "Download objects from a remote repository via dumb HTTP.",
     ),
     (
       "quiltimport", "git quiltimport [--dry-run] [--author <author>] [--patches <dir>]",
       "Import a quilt patch series.",
     ),
     (
-      "check-mailmap", "git check-mailmap [--stdin] <contact>...",
-      "Show canonical names and email addresses of contacts.",
+      "check-mailmap", "git check-mailmap [--stdin] <contact>...", "Show canonical names and email addresses of contacts.",
     ),
     (
-      "unpack-file", "git unpack-file <blob-id>",
-      "Creates a file holding the contents of the blob specified by blob-id.",
+      "unpack-file", "git unpack-file <blob-id>", "Creates a file holding the contents of the blob specified by blob-id.",
     ),
     (
-      "web--browse", "git web--browse [--browser=<browser>] <url>...",
-      "Open one or more URLs in a web browser.",
+      "web--browse", "git web--browse [--browser=<browser>] <url>...", "Open one or more URLs in a web browser.",
     ),
     ("version", "git version", "Show version information."),
     ("pr", "bit pr <subcommand> [<args>]", "Manage pull requests."),

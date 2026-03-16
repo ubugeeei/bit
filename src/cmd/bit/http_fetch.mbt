@@ -67,9 +67,7 @@ async fn handle_http_fetch(args : Array[String]) -> Unit raise Error {
         if verbose {
           eprint_line("Getting \{pack_url}")
         }
-        let (_presp, pack_data) = @bitnative.native_http_get(
-          pack_url, headers,
-        ) catch {
+        let (_presp, pack_data) = @bitnative.native_http_get(pack_url, headers) catch {
           err => {
             eprint_line("warning: failed to fetch \{pack_url}: \{err}")
             continue
@@ -85,19 +83,18 @@ async fn handle_http_fetch(args : Array[String]) -> Unit raise Error {
         }
         // Fetch corresponding .idx if pack
         if pack_name.has_suffix(".pack") {
-          let idx_name = pack_name[:pack_name.length() - 5].to_string() +
-            ".idx"
+          let idx_name = pack_name[:pack_name.length() - 5].to_string() + ".idx"
           let idx_url = url + "/objects/pack/" + idx_name
           if verbose {
             eprint_line("Getting \{idx_url}")
           }
-          let (_iresp, idx_data) = @bitnative.native_http_get(
-            idx_url, headers,
-          ) catch {
+          let (_iresp, idx_data) = @bitnative.native_http_get(idx_url, headers) catch {
             _ => continue
           }
           let idx_path = objects_dir + "/pack/" + idx_name
-          @fs.write_bytes_to_file(idx_path, idx_data) catch { _ => () }
+          @fs.write_bytes_to_file(idx_path, idx_data) catch {
+            _ => ()
+          }
         }
       }
     }
@@ -113,7 +110,7 @@ async fn http_fetch_loose_object(
   oid_hex : String,
   objects_dir : String,
   headers : Map[String, String],
-  verbose : Bool
+  verbose : Bool,
 ) -> Unit raise Error {
   if oid_hex.length() < 4 {
     return
@@ -147,7 +144,7 @@ async fn http_fetch_loose_object(
 fn http_fetch_write_ref(
   git_dir : String,
   ref_name : String,
-  commit_id : String
+  commit_id : String,
 ) -> Unit raise Error {
   let ref_path = git_dir + "/" + ref_name
   let parent = parent_dir(ref_path)
@@ -159,8 +156,7 @@ fn http_fetch_write_ref(
     content.to_array().map(fn(c) { c.to_int().to_byte() }),
   )
   @fs.write_bytes_to_file(ref_path, content_bytes) catch {
-    err => raise @bitcore.GitError::IoError(
-        "cannot write ref \{ref_path}: \{err}",
-      )
+    err =>
+      raise @bitcore.GitError::IoError("cannot write ref \{ref_path}: \{err}")
   }
 }

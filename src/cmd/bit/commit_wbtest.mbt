@@ -61,37 +61,6 @@ test "commit: signing options require standalone error" {
 }
 
 ///|
-test "commit: sha256 repository requires real git fallback" {
-  let fs = @bitcore.TestFs::new()
-  fs.mkdir_p("/repo/.git")
-  fs.write_string(
-    "/repo/.git/config", "[extensions]\n\tobjectformat = sha256\n",
-  )
-  assert_true(commit_repo_requires_real_git(fs, "/repo/.git"))
-
-  fs.write_string(
-    "/repo/.git/config", "[core]\n\trepositoryformatversion = 0\n",
-  )
-  assert_false(commit_repo_requires_real_git(fs, "/repo/.git"))
-}
-
-///|
-test "commit: compatobjectformat=sha256 does not require real git fallback" {
-  let fs = @bitcore.TestFs::new()
-  fs.mkdir_p("/repo/.git")
-  // compat format is informational; primary sha1 is fine
-  fs.write_string(
-    "/repo/.git/config", "[extensions]\n\tcompatobjectformat = sha256\n",
-  )
-  assert_false(commit_repo_requires_real_git(fs, "/repo/.git"))
-
-  fs.write_string(
-    "/repo/.git/config", "[extensions]\n\tcompatobjectformat = sha1\n",
-  )
-  assert_false(commit_repo_requires_real_git(fs, "/repo/.git"))
-}
-
-///|
 test "commit: no-edit prefers SQUASH_MSG and appends MERGE_MSG comments" {
   let fs = @bitcore.TestFs::new()
   fs.mkdir_p("/repo/.git")

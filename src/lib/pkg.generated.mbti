@@ -42,7 +42,7 @@ pub fn check_unsupported_gitattributes(&@types.RepoFileSystem, String) -> String
 
 pub fn checkout(&@types.FileSystem, &@types.RepoFileSystem, String, String, detach? : Bool, update_worktree? : Bool, update_index? : Bool) -> @object.ObjectId raise @object.GitError
 
-pub fn cherry_pick(&@types.FileSystem, &@types.RepoFileSystem, String, @object.ObjectId, String, Int64, allow_empty? : Bool) -> CherryPickResult raise @object.GitError
+pub fn cherry_pick(&@types.FileSystem, &@types.RepoFileSystem, String, @object.ObjectId, String, Int64, allow_empty? : Bool, no_commit? : Bool, message_suffix? : String, signoff_committer? : String) -> CherryPickResult raise @object.GitError
 
 pub fn clean_for_storage(Bytes, FileEolAttrs, AutoCrlf) -> Bytes
 
@@ -109,6 +109,8 @@ pub fn create_worktree(&@types.FileSystem, &@types.RepoFileSystem, String, Strin
 pub fn date_is_leap_year(Int) -> Bool
 
 pub fn days_since_epoch(Int, Int, Int) -> Int
+
+pub fn decode_bytes(Bytes) -> String
 
 pub fn decode_commit_message_bytes(Bytes, String) -> String
 
@@ -284,6 +286,8 @@ pub fn merge_base_independent(ObjectDb, &@types.RepoFileSystem, Array[@object.Ob
 
 pub fn merge_base_is_ancestor(ObjectDb, &@types.RepoFileSystem, @object.ObjectId, @object.ObjectId) -> Bool raise @object.GitError
 
+pub fn mode_to_string(Int) -> String
+
 pub fn month_name_to_number(String) -> Int?
 
 pub fn move_directory(&@types.RepoFileSystem, &@types.FileSystem, String, String) -> Unit
@@ -428,7 +432,7 @@ pub fn rebase_skip(&@types.FileSystem, &@types.RepoFileSystem, String) -> Rebase
 
 pub fn rebase_start(&@types.FileSystem, &@types.RepoFileSystem, String, @object.ObjectId) -> RebaseResult raise @object.GitError
 
-pub fn rebase_start_with_onto(&@types.FileSystem, &@types.RepoFileSystem, String, @object.ObjectId, @object.ObjectId) -> RebaseResult raise @object.GitError
+pub fn rebase_start_with_onto(&@types.FileSystem, &@types.RepoFileSystem, String, @object.ObjectId, @object.ObjectId, force_rebase? : Bool) -> RebaseResult raise @object.GitError
 
 pub fn receive_build_status_response(ReceivePackResult) -> Bytes
 
@@ -584,7 +588,11 @@ pub fn tar_split_path(String) -> (String, String)
 
 pub fn tar_write_string(FixedArray[Byte], Int, String, Int) -> Unit
 
+pub fn to_octal_string(Int) -> String
+
 pub fn tree_files_to_index(ObjectDb, &@types.RepoFileSystem, Map[String, TreeFileEntry]) -> Array[IndexEntry] raise @object.GitError
+
+pub fn trim_string(String) -> String
 
 pub fn unlock_worktree(&@types.FileSystem, &@types.RepoFileSystem, String, String) -> Unit raise @object.GitError
 

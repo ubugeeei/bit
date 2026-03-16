@@ -6,6 +6,8 @@ import {
 }
 
 // Values
+pub fn array_to_bytes(Array[Byte]) -> Bytes
+
 pub fn create_blob(Bytes) -> (ObjectId, Bytes)
 
 pub fn create_blob_string(String) -> (ObjectId, Bytes)
@@ -66,6 +68,8 @@ pub struct ObjectId {
 pub fn ObjectId::from_bytes(Bytes) -> Self raise GitError
 pub fn ObjectId::from_bytes_at(Bytes, Int) -> Self
 pub fn ObjectId::from_hex(String) -> Self raise GitError
+pub fn ObjectId::is_zero(Self) -> Bool
+pub fn ObjectId::is_zero_hex(String) -> Bool
 pub fn ObjectId::new(FixedArray[Byte]) -> Self
 pub fn ObjectId::to_bytes(Self) -> Bytes
 pub fn ObjectId::to_hex(Self) -> String

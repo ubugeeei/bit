@@ -21,24 +21,6 @@ fn add_abs_path(path : String) -> String {
 }
 
 ///|
-async fn delegate_add_to_real_git(args : Array[String], cwd : String) -> Unit {
-  let argv : Array[String] = ["add"]
-  for arg in args {
-    argv.push(arg)
-  }
-  let code = @process.run(
-    resolve_real_git_for_dispatch(),
-    argv,
-    inherit_env=true,
-    cwd=add_abs_path(cwd),
-    stdin=@stdio.stdin,
-    stdout=@stdio.stdout,
-    stderr=@stdio.stderr,
-  )
-  @sys.exit(code)
-}
-
-///|
 async fn run_add_hook(
   fs : OsFs,
   root : String,
@@ -96,10 +78,7 @@ async fn handle_add(args : Array[String]) -> Unit raise Error {
   let fs = OsFs::new()
   let rfs : &@bitcore.RepoFileSystem = fs
   let git_dir = resolve_git_dir(rfs, root)
-  if add_repo_requires_real_git(rfs, git_dir) {
-    delegate_add_to_real_git(args, root)
-    return
-  }
+
   if add_should_use_storage_runtime(args) {
     match add_storage_runtime_delegate_args(args) {
       Some(add_args) => {
@@ -368,14 +347,6 @@ async fn handle_add(args : Array[String]) -> Unit raise Error {
       raise @bitcore.GitError::InvalidObject("post-add hook failed")
     }
   }
-}
-
-///|
-fn add_repo_requires_real_git(
-  fs : &@bitcore.RepoFileSystem,
-  git_dir : String,
-) -> Bool {
-  repo_object_format(fs, git_dir) != "sha1"
 }
 
 ///|

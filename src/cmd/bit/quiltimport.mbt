@@ -23,18 +23,14 @@ async fn handle_quiltimport(args : Array[String]) -> Unit raise Error {
           author = args[i]
         }
       }
-      _ if arg.has_prefix("--author=") => {
-        author = arg[9:].to_string()
-      }
+      _ if arg.has_prefix("--author=") => author = arg[9:].to_string()
       "--patches" => {
         i += 1
         if i < args.length() {
           patches_dir = args[i]
         }
       }
-      _ if arg.has_prefix("--patches=") => {
-        patches_dir = arg[10:].to_string()
-      }
+      _ if arg.has_prefix("--patches=") => patches_dir = arg[10:].to_string()
       _ if arg.has_prefix("-") => warn_unimplemented_arg("quiltimport", arg)
       _ => ()
     }
@@ -148,13 +144,15 @@ fn quiltimport_trim(s : String) -> String {
   let mut start = 0
   let mut end = chars.length()
   while start < end &&
-    (chars[start] == ' ' || chars[start] == '\t' || chars[start] == '\r') {
+        (chars[start] == ' ' || chars[start] == '\t' || chars[start] == '\r') {
     start += 1
   }
   while end > start &&
-    (
-      chars[end - 1] == ' ' || chars[end - 1] == '\t' || chars[end - 1] == '\r'
-    ) {
+        (
+          chars[end - 1] == ' ' ||
+          chars[end - 1] == '\t' ||
+          chars[end - 1] == '\r'
+        ) {
     end -= 1
   }
   if start == 0 && end == chars.length() {

@@ -1000,7 +1000,7 @@ pub fn rebase_start_with_onto(
   root : String,
   onto : @bit.ObjectId,
   upstream : @bit.ObjectId,
-  force_rebase~ : Bool = false,
+  force_rebase? : Bool = false,
 ) -> RebaseResult raise @bit.GitError {
   let git_dir = join_path(root, ".git")
   // Check if rebase already in progress

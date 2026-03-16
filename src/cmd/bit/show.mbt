@@ -526,7 +526,8 @@ fn show_render_commit_block(
         let short = String::unsafe_substring(commit_id.to_hex(), start=0, end=7)
         let title = show_first_message_line(show_info.message)
         let date = format_show_date_iso_short(
-          show_info.timestamp, show_info.timezone,
+          show_info.timestamp,
+          show_info.timezone,
         )
         return Some("\{short} (\{title}, \{date})\n")
       }
