@@ -1669,47 +1669,9 @@ fn tag_is_ancestor(
   ancestor_id : @bitcore.ObjectId,
   descendant_id : @bitcore.ObjectId,
 ) -> Bool {
-  if ancestor_id.to_hex() == descendant_id.to_hex() {
-    return true
+  @bitlib.merge_base_is_ancestor(db, fs, ancestor_id, descendant_id) catch {
+    _ => false
   }
-  let visited : Map[String, Bool] = {}
-  let queue : Array[@bitcore.ObjectId] = [descendant_id]
-  let mut queue_idx = 0
-  visited[descendant_id.to_hex()] = true
-  while queue_idx < queue.length() {
-    let current = queue[queue_idx]
-    queue_idx += 1
-    let obj = db.get(fs, current) catch { _ => None }
-    match obj {
-      Some(o) if o.obj_type == @bitcore.ObjectType::Commit => {
-        let text = decode_bytes(o.data)
-        for line_view in text.split("\n") {
-          let line = line_view.to_string()
-          if line.has_prefix("parent ") {
-            let parent_hex = String::unsafe_substring(
-              line,
-              start=7,
-              end=line.length(),
-            )
-            if parent_hex == ancestor_id.to_hex() {
-              return true
-            }
-            if not(visited.contains(parent_hex)) {
-              visited[parent_hex] = true
-              let parent_id = @bitcore.ObjectId::from_hex(parent_hex) catch {
-                _ => continue
-              }
-              queue.push(parent_id)
-            }
-          } else if line == "" {
-            break
-          }
-        }
-      }
-      _ => ()
-    }
-  }
-  false
 }
 
 ///|

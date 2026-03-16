@@ -270,18 +270,10 @@ fn name_rev_replace_oids(
 
 ///|
 fn name_rev_is_hex_char(c : Char) -> Bool {
-  (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+  @bithash.is_hex_char(c)
 }
 
 ///|
 fn name_rev_all_hex(s : String) -> Bool {
-  if s.length() != 40 {
-    return false
-  }
-  for c in s {
-    if not(name_rev_is_hex_char(c)) {
-      return false
-    }
-  }
-  true
+  s.length() == 40 && @bithash.is_hex_string(s)
 }

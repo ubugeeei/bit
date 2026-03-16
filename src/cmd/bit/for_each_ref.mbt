@@ -1589,52 +1589,16 @@ fn for_each_ref_peel_to_commit_sync(
 
 ///|
 // Check if ancestor_id is an ancestor of (or equal to) descendant_id.
-// Uses BFS walking from descendant through parent chain.
+// Delegates to the canonical library implementation.
 async fn for_each_ref_is_ancestor(
   fs : OsFs,
   db : @bitlib.ObjectDb,
   ancestor_id : @bitcore.ObjectId,
   descendant_id : @bitcore.ObjectId,
 ) -> Bool {
-  if ancestor_id.to_hex() == descendant_id.to_hex() {
-    return true
+  @bitlib.merge_base_is_ancestor(db, fs, ancestor_id, descendant_id) catch {
+    _ => false
   }
-  let visited : Map[String, Bool] = {}
-  let queue : Array[@bitcore.ObjectId] = [descendant_id]
-  visited[descendant_id.to_hex()] = true
-  while queue.length() > 0 {
-    let current = queue.remove(0)
-    let obj = db.get(fs, current) catch { _ => continue }
-    match obj {
-      Some(o) if o.obj_type == @bitcore.ObjectType::Commit => {
-        let commit_text = decode_bytes(o.data)
-        for line_view in commit_text.split("\n") {
-          let line = line_view.to_string()
-          if line.has_prefix("parent ") {
-            let parent_hex = String::unsafe_substring(
-              line,
-              start=7,
-              end=line.length(),
-            )
-            if parent_hex == ancestor_id.to_hex() {
-              return true
-            }
-            if not(visited.contains(parent_hex)) {
-              visited[parent_hex] = true
-              let parent_id = @bitcore.ObjectId::from_hex(parent_hex) catch {
-                _ => continue
-              }
-              queue.push(parent_id)
-            }
-          } else if line == "" {
-            break
-          }
-        }
-      }
-      _ => ()
-    }
-  }
-  false
 }
 
 ///|

@@ -3260,26 +3260,9 @@ fn is_ancestor_commit(
   ancestor : @bitcore.ObjectId,
   commit_id : @bitcore.ObjectId,
 ) -> Bool {
-  let stack : Array[@bitcore.ObjectId] = [commit_id]
-  let seen : Map[String, Bool] = {}
-  while stack.length() > 0 {
-    let id = stack.pop().unwrap_or(ancestor)
-    let hex = id.to_hex()
-    if seen.contains(hex) {
-      continue
-    }
-    seen[hex] = true
-    if id == ancestor {
-      return true
-    }
-    let obj = db.get(fs, id) catch { _ => continue }
-    guard obj is Some(o) else { continue }
-    let info = @bitcore.parse_commit(o.data) catch { _ => continue }
-    for p in info.parents {
-      stack.push(p)
-    }
+  @bitlib.merge_base_is_ancestor(db, fs, ancestor, commit_id) catch {
+    _ => false
   }
-  false
 }
 
 ///|

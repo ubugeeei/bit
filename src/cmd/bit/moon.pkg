@@ -1,6 +1,7 @@
 import {
   "mizchi/bit/bootstrap" @bootstrap,
   "mizchi/bit" @bitcore,
+  "mizchi/bit/hash" @bithash,
   "mizchi/bit/pack" @pack,
   "mizchi/bit/protocol" @protocol,
   "mizchi/bit/lib" @bitlib,

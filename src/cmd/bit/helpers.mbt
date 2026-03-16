@@ -262,47 +262,12 @@ fn decode_bytes(data : Bytes) -> String {
 
 ///|
 fn trim_string(s : String) -> String {
-  let mut start = 0
-  let mut end = s.length()
-  while start < end {
-    let c = s.unsafe_get(start)
-    if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
-      start += 1
-    } else {
-      break
-    }
-  }
-  while end > start {
-    let c = s.unsafe_get(end - 1)
-    if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
-      end -= 1
-    } else {
-      break
-    }
-  }
-  if start == 0 && end == s.length() {
-    s
-  } else {
-    String::unsafe_substring(s, start~, end~)
-  }
-}
-
-///|
-fn is_hex_char(c : Char) -> Bool {
-  (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+  @bitlib.trim_string(s)
 }
 
 ///|
 fn is_hex_string(s : String) -> Bool {
-  if s.length() == 0 {
-    return false
-  }
-  for c in s {
-    if (c |> is_hex_char |> not) {
-      return false
-    }
-  }
-  true
+  @bithash.is_hex_string(s)
 }
 
 ///|

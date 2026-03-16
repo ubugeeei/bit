@@ -267,39 +267,7 @@ pub fn fast_import_parse_marks(content : String) -> Array[(Int, String)] {
 ///|
 /// Trim whitespace from a string.
 pub fn fast_import_parse_trim(s : String) -> String {
-  let mut start = 0
-  let mut end = s.length()
-  let chars : Array[Char] = []
-  for c in s {
-    chars.push(c)
-  }
-  while start < end &&
-        (
-          chars[start] == ' ' ||
-          chars[start] == '\n' ||
-          chars[start] == '\r' ||
-          chars[start] == '\t'
-        ) {
-    start += 1
-  }
-  while end > start &&
-        (
-          chars[end - 1] == ' ' ||
-          chars[end - 1] == '\n' ||
-          chars[end - 1] == '\r' ||
-          chars[end - 1] == '\t'
-        ) {
-    end -= 1
-  }
-  if start == 0 && end == s.length() {
-    s
-  } else {
-    let buf = StringBuilder::new()
-    for i in start..<end {
-      buf.write_char(chars[i])
-    }
-    buf.to_string()
-  }
+  trim_string(s)
 }
 
 ///|

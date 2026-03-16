@@ -315,27 +315,7 @@ fn merge_is_ancestor(
   ancestor : @bit.ObjectId,
   commit_id : @bit.ObjectId,
 ) -> Bool raise @bit.GitError {
-  let stack : Array[@bit.ObjectId] = [commit_id]
-  let seen : Map[String, Bool] = {}
-  while stack.length() > 0 {
-    let id = match stack.pop() {
-      None => raise @bit.GitError::InvalidObject("Empty stack")
-      Some(v) => v
-    }
-    let hex = id.to_hex()
-    if seen.contains(hex) {
-      continue
-    }
-    seen[hex] = true
-    if id == ancestor {
-      return true
-    }
-    let parents = merge_commit_parents(db, fs, id)
-    for p in parents {
-      stack.push(p)
-    }
-  }
-  false
+  merge_base_is_ancestor(db, fs, ancestor, commit_id)
 }
 
 ///|
