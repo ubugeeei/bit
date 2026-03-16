@@ -543,28 +543,91 @@ pub fn create_packfile_with_delta_stats_compression(
   result.push(((count >> 8) & 0xff).to_byte())
   result.push((count & 0xff).to_byte())
 
-  // Pack each object (delta against the last object of the same type)
+  // Pack each object with sliding window for delta base selection.
+  // Window keeps recent objects of same type for better delta matches.
   let mut offset = 12
-  let last_by_type : Map[Int, (Int, @bit.PackObject)] = {}
+  let window_by_type : Map[Int, Array[DeltaWindowEntry]] = {}
+  let window_size = 10
   let mut delta_count = 0
   for obj in objects {
     let obj_offset = offset
     let key = obj.obj_type.to_packfile_type()
-    let base = last_by_type.get(key)
+    let window = match window_by_type.get(key) {
+      Some(w) => w
+      None => {
+        let w : Array[DeltaWindowEntry] = []
+        window_by_type[key] = w
+        w
+      }
+    }
+    // Find best delta base from window (smallest delta wins)
+    let mut best_base : (Int, @bit.PackObject)? = None
+    let mut best_delta : Bytes? = None
+    let mut best_delta_size = obj.data.length() // upper bound: raw size
+    let try_window = match delta_mode {
+      @bit.PackDeltaMode::NoDelta => false
+      _ => window.length() > 0
+    }
+    if try_window {
+      // Try most recent first (best locality), early exit if delta < 50% of raw
+      let half_raw = obj.data.length() / 2
+      let mut wi = window.length() - 1
+      while wi >= 0 {
+        let entry = window[wi]
+        wi -= 1
+        if entry.offset >= obj_offset {
+          continue
+        }
+        // Size heuristic: skip if base size is vastly different (>4x or <1/4)
+        let base_size = entry.obj.data.length()
+        let target_size = obj.data.length()
+        if base_size > target_size * 4 || target_size > base_size * 4 {
+          continue
+        }
+        // Build block index (cached per window entry)
+        let (idx, bpow) = match entry.block_index {
+          Some(cached) => cached
+          None => {
+            let built = build_block_index(entry.obj.data, delta_block_size)
+            entry.block_index = Some(built)
+            built
+          }
+        }
+        let delta = build_delta_with_index(
+          entry.obj.data,
+          obj.data,
+          idx,
+          bpow,
+        )
+        if delta.length() < best_delta_size {
+          best_delta_size = delta.length()
+          best_base = Some((entry.offset, entry.obj))
+          best_delta = Some(delta)
+          // Early exit if delta is already good enough
+          if best_delta_size < half_raw {
+            break
+          }
+        }
+      }
+    }
     let (written, used_delta) = pack_object_with_delta(
       obj,
-      base,
+      best_base,
       obj_offset,
       result,
       delta_mode,
       compression,
-      None,
+      best_delta,
     )
     offset = offset + written
     if used_delta {
       delta_count = delta_count + 1
     }
-    last_by_type[key] = (obj_offset, obj)
+    // Add to window, evict oldest if full
+    window.push({ offset: obj_offset, obj, depth: 0, block_index: None })
+    if window.length() > window_size {
+      ignore(window.remove(0))
+    }
   }
 
   // Compute SHA-1 of everything so far
