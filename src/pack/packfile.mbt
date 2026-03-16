@@ -19,13 +19,12 @@ fn compress_pack_data(
       let deflated = @zlib.deflate_compress_fixed(data)
       let total_len = 2 + deflated.length() + 4
       let result : FixedArray[Byte] = FixedArray::make(total_len, b'\x00')
-      result[0] = b'\x78' // CMF: deflate, window=32K
-      result[1] = b'\x01' // FLG: level 0-1
+      result[0] = b'\x78'
+      result[1] = b'\x01'
       for i in 0..<deflated.length() {
         result[2 + i] = deflated[i]
       }
       let checksum = @zlib.adler32(data)
-      // big-endian adler32
       result[total_len - 4] = ((checksum >> 24) & 0xFF).to_byte()
       result[total_len - 3] = ((checksum >> 16) & 0xFF).to_byte()
       result[total_len - 2] = ((checksum >> 8) & 0xFF).to_byte()
