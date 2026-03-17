@@ -242,7 +242,20 @@ async fn handlers_remote_pull_wbtest_collect_shim_git(
 ) -> (Int, String, String) raise Error {
   handlers_remote_pull_wbtest_shim_lock.acquire()
   defer handlers_remote_pull_wbtest_shim_lock.release()
-  let repo_root = @env.current_dir().unwrap_or(".")
+  // Derive repo root from the executable path to avoid CWD pollution
+  let repo_root = match @sys.get_env_var("CARGO_MANIFEST_DIR") {
+    Some(d) => d
+    None => {
+      let exe = @sys.get_cli_args()[0]
+      // exe is like /path/to/bit/_build/native/release/build/cmd/bit/bit.exe
+      // or the test binary — fallback to current_dir
+      let idx = exe.find("/_build/")
+      match idx {
+        Some(i) => String::unsafe_substring(exe, start=0, end=i)
+        None => @env.current_dir().unwrap_or(".")
+      }
+    }
+  }
   let shim_git = repo_root + "/tools/git-shim/bin/git"
   let shim_moon = "/tmp/bit-pull-shim-moon.sh"
   let fs = OsFs::new()
