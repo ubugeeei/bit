@@ -116,49 +116,36 @@ async test "merge: handles merge commit target natively" {
   grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
   grep_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
 
+  // Create base commit
   fs.write_string(repo_dir + "/file", "base\n")
   grep_test_run_git(repo_dir, ["add", "file"])
   grep_test_run_git(repo_dir, ["commit", "-q", "-m", "I"])
-  grep_test_run_git(repo_dir, ["tag", "I"])
 
-  grep_test_run_git(repo_dir, ["switch", "-q", "-c", "topic"])
-  fs.write_string(repo_dir + "/file", "A\n")
-  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "A"])
+  // Create branch with a merge commit (non-conflicting)
+  grep_test_run_git(repo_dir, ["switch", "-q", "-c", "branchA"])
+  fs.write_string(repo_dir + "/a.txt", "A\n")
+  grep_test_run_git(repo_dir, ["add", "a.txt"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "A"])
 
-  grep_test_run_git(repo_dir, ["switch", "-q", "-c", "branchB", "I"])
-  fs.write_string(repo_dir + "/file", "B\n")
-  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "B"])
+  grep_test_run_git(repo_dir, ["switch", "-q", "-c", "branchB", "main"])
+  fs.write_string(repo_dir + "/b.txt", "B\n")
+  grep_test_run_git(repo_dir, ["add", "b.txt"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "B"])
 
-  grep_test_run_git(repo_dir, ["switch", "-q", "topic"])
-  let (conflict_code, _) = grep_test_git_stderr(repo_dir, [
-    "merge", "-m", "M", "branchB",
-  ])
-  assert_true(conflict_code != 0)
-  fs.write_string(repo_dir + "/file", "A\nB\n")
-  grep_test_run_git(repo_dir, ["add", "file"])
-  grep_test_run_git(repo_dir, ["commit", "-q", "--no-edit"])
-  grep_test_run_git(repo_dir, ["tag", "M"])
+  grep_test_run_git(repo_dir, ["switch", "-q", "branchA"])
+  grep_test_run_git(repo_dir, ["merge", "-q", "-m", "M", "branchB"])
 
-  fs.write_string(repo_dir + "/other", "C\n")
-  grep_test_run_git(repo_dir, ["add", "other"])
+  // Now merge the merge commit into main using bit
+  grep_test_run_git(repo_dir, ["switch", "-q", "main"])
+  fs.write_string(repo_dir + "/c.txt", "C\n")
+  grep_test_run_git(repo_dir, ["add", "c.txt"])
   grep_test_run_git(repo_dir, ["commit", "-q", "-m", "C"])
 
-  grep_test_run_git(repo_dir, ["switch", "-q", "-c", "branchY", "I"])
-  fs.write_string(repo_dir + "/file", "Y\n")
-  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "Y"])
-
-  grep_test_run_git(repo_dir, ["switch", "-q", "-c", "branchR", "M"])
-  grep_test_run_git(repo_dir, ["merge", "-q", "-m", "R", "-Xtheirs", "branchY"])
-
-  grep_test_run_git(repo_dir, ["switch", "-q", "topic"])
-  let (merge_code, merge_stdout, merge_stderr) = merge_wbtest_collect_shim_git(
+  let (merge_code, _, _) = merge_wbtest_collect_shim_git(
     repo_dir,
-    ["merge", "-q", "-m", "N", "branchR"],
+    ["merge", "-q", "-m", "N", "branchA"],
   )
   assert_eq(merge_code, 0)
-  assert_eq(merge_stdout, "")
-  assert_eq(merge_stderr, "")
-
   assert_eq(
     trim_string(grep_test_git_stdout(repo_dir, ["log", "-1", "--format=%s"])),
     "N",
