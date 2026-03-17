@@ -249,7 +249,9 @@ fn storage_parse_git_env_timestamp(raw : String) -> Int64? {
 
 ///|
 fn storage_get_current_timestamp() -> Int64 {
-  @env.now().to_int().to_int64()
+  // @env.now() returns milliseconds as UInt64; convert to seconds as Int64
+  let ms = @env.now()
+  (ms / 1000UL).reinterpret_as_int64()
 }
 
 ///|

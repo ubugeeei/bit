@@ -141,10 +141,9 @@ async test "merge: handles merge commit target natively" {
   grep_test_run_git(repo_dir, ["add", "c.txt"])
   grep_test_run_git(repo_dir, ["commit", "-q", "-m", "C"])
 
-  let (merge_code, _, _) = merge_wbtest_collect_shim_git(
-    repo_dir,
-    ["merge", "-q", "-m", "N", "branchA"],
-  )
+  let (merge_code, _, _) = merge_wbtest_collect_shim_git(repo_dir, [
+    "merge", "-q", "-m", "N", "branchA",
+  ])
   assert_eq(merge_code, 0)
   assert_eq(
     trim_string(grep_test_git_stdout(repo_dir, ["log", "-1", "--format=%s"])),
