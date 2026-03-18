@@ -53,7 +53,7 @@ async fn handle_upload_archive(args : Array[String]) -> Unit raise Error {
       continue
     }
     // Convert to string and strip trailing newline
-    let line = upload_archive_bytes_to_string(data)
+    let line = decode_bytes(data)
     let trimmed = if line.length() > 0 && line[line.length() - 1] == '\n' {
       line[:line.length() - 1].to_string()
     } else {
@@ -64,13 +64,11 @@ async fn handle_upload_archive(args : Array[String]) -> Unit raise Error {
     } else {
       upload_archive_send_nack("'argument' token or flush expected")
       @sys.exit(1)
-      return
     }
   }
   if archive_args.length() > 64 {
     upload_archive_send_nack("Too many options (>64)")
     @sys.exit(1)
-    return
   }
   // Parse archive arguments
   let mut format = "tar"
@@ -106,21 +104,18 @@ async fn handle_upload_archive(args : Array[String]) -> Unit raise Error {
   if format != "tar" {
     upload_archive_send_nack("Unknown archive format '\{format}'")
     @sys.exit(1)
-    return
   }
   // Resolve tree-ish
   let resolved_id = @bitrepo.rev_parse(fs, git_dir, tree_ish)
   guard resolved_id is Some(oid) else {
     upload_archive_send_nack("not a valid object name: \{tree_ish}")
     @sys.exit(1)
-    return
   }
   let db = @bitlib.ObjectDb::load(fs, git_dir)
   let obj = db.get(fs, oid)
   guard obj is Some(o) else {
     upload_archive_send_nack("not a valid object name: \{tree_ish}")
     @sys.exit(1)
-    return
   }
   let (tree_id, mtime) = match o.obj_type {
     @bitcore.ObjectType::Tree => (oid, 0L)
@@ -249,11 +244,3 @@ async fn upload_archive_send_nack(msg : String) -> Unit raise Error {
   @stdio.stdout.write(@protocol.pktline_encode("NACK \{msg}\n"))
 }
 
-///|
-fn upload_archive_bytes_to_string(data : Bytes) -> String {
-  let result = StringBuilder::new()
-  for b in data {
-    result.write_char(b.to_int().unsafe_to_char())
-  }
-  result.to_string()
-}

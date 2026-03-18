@@ -82,9 +82,11 @@ async fn handle_checkout_index(args : Array[String]) -> Unit raise Error {
   // Process each file
   let mut updated_entries = false
   let new_entries : Array[@bitlib.IndexEntry] = []
+  let entry_index_by_path : Map[String, Int] = {}
   if update_index {
-    for e in entries {
+    for i, e in entries {
       new_entries.push(e)
+      entry_index_by_path[e.path] = i
     }
   }
   for file in files_to_checkout {
@@ -169,10 +171,9 @@ async fn handle_checkout_index(args : Array[String]) -> Unit raise Error {
                 match meta {
                   Some(m) => {
                     let (mtime_sec, mtime_nsec) = m.mtime()
-                    // Update entry in new_entries
-                    for i = 0; i < new_entries.length(); i = i + 1 {
-                      if new_entries[i].path == path {
-                        new_entries[i] = @bitlib.IndexEntry::new(
+                    match entry_index_by_path.get(path) {
+                      Some(idx) => {
+                        new_entries[idx] = @bitlib.IndexEntry::new(
                           path,
                           e.id,
                           e.mode,
@@ -186,8 +187,8 @@ async fn handle_checkout_index(args : Array[String]) -> Unit raise Error {
                           gid=m.gid.unwrap_or(e.gid),
                         )
                         updated_entries = true
-                        break
                       }
+                      None => ()
                     }
                   }
                   None => ()

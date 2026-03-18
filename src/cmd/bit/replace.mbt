@@ -26,7 +26,6 @@ async fn handle_replace(args : Array[String]) -> Unit raise Error {
           "usage: git replace [-f] [-d] [-l [<pattern>]] [--graft <commit> [<parent>...]]",
         )
         @sys.exit(129)
-        return
       }
       "-l" | "--list" => {
         list_mode = true
@@ -84,7 +83,6 @@ async fn handle_replace(args : Array[String]) -> Unit raise Error {
       _ if arg.has_prefix("-") && not(delete_mode) => {
         eprint_line("error: unknown option '\{arg}'")
         @sys.exit(129)
-        return
       }
       _ => {
         positional.push(arg)
@@ -96,7 +94,6 @@ async fn handle_replace(args : Array[String]) -> Unit raise Error {
   if edit_mode {
     eprint_line("error: --edit requires an editor, which is not supported")
     @sys.exit(1)
-    return
   }
   if convert_graft_file {
     replace_convert_graft_file(rfs, wfs, git_dir, force)
@@ -160,15 +157,8 @@ fn replace_resolve_to_oid(
   git_dir : String,
   rev : String,
 ) -> @bitcore.ObjectId raise Error {
-  if rev.length() == 40 {
-    let valid = rev
-      .iter()
-      .all(fn(c) {
-        (c >= '0' && c <= '9') ||
-        (c >= 'a' && c <= 'f') ||
-        (c >= 'A' && c <= 'F')
-      })
-    if valid {
+  if rev.length() == 40 && is_hex_string(rev) {
+    {
       return @bitcore.ObjectId::from_hex(rev)
     }
   }
@@ -193,26 +183,21 @@ async fn replace_list(
   let entries = fs.readdir(replace_dir) catch { _ => return }
   let oids : Array[String] = []
   for name in entries {
-    if name.length() != 40 {
-      continue
-    }
-    let valid = name
-      .iter()
-      .all(fn(c) {
-        (c >= '0' && c <= '9') ||
-        (c >= 'a' && c <= 'f') ||
-        (c >= 'A' && c <= 'F')
-      })
-    if not(valid) {
+    if name.length() != 40 || not(is_hex_string(name)) {
       continue
     }
     match pattern {
-      Some(pat) => if not(replace_glob_match(pat, name)) { continue }
+      Some(pat) => if not(@ignore.match_glob(pat, name)) { continue }
       None => ()
     }
     oids.push(name)
   }
   oids.sort()
+  let db : @bitlib.ObjectDb? = if format == "long" {
+    Some(@bitlib.ObjectDb::load(fs, git_dir) catch { _ => return })
+  } else {
+    None
+  }
   for oid in oids {
     match format {
       "short" => print_line(oid)
@@ -224,24 +209,22 @@ async fn replace_list(
           None => print_line(oid)
         }
       }
-      "long" => {
-        let ref_path = replace_dir + "/" + oid
-        let replacement = replace_read_ref(fs, ref_path)
-        let db = @bitlib.ObjectDb::load(fs, git_dir) catch {
-          _ => {
-            print_line(oid)
-            continue
-          }
-        }
-        let orig_type = replace_get_object_type_str(db, fs, oid)
-        match replacement {
-          Some(rep) => {
-            let rep_type = replace_get_object_type_str(db, fs, rep)
-            print_line("\{oid} (\{orig_type}) -> \{rep} (\{rep_type})")
+      "long" =>
+        match db {
+          Some(db) => {
+            let ref_path = replace_dir + "/" + oid
+            let replacement = replace_read_ref(fs, ref_path)
+            let orig_type = replace_get_object_type_str(db, fs, oid)
+            match replacement {
+              Some(rep) => {
+                let rep_type = replace_get_object_type_str(db, fs, rep)
+                print_line("\{oid} (\{orig_type}) -> \{rep} (\{rep_type})")
+              }
+              None => print_line(oid)
+            }
           }
           None => print_line(oid)
         }
-      }
       _ => print_line(oid)
     }
   }
@@ -296,13 +279,11 @@ async fn replace_create(
   if obj is None {
     eprint_line("error: object '\{object_ref}' does not exist")
     @sys.exit(1)
-    return
   }
   let rep = db.get(fs, replacement_id)
   if rep is None {
     eprint_line("error: replacement object '\{replacement_ref}' does not exist")
     @sys.exit(1)
-    return
   }
   let replace_dir = git_dir + "/refs/replace"
   let ref_path = replace_dir + "/" + object_id.to_hex()
@@ -311,7 +292,6 @@ async fn replace_create(
       "error: replace ref 'refs/replace/\{object_id.to_hex()}' already exists",
     )
     @sys.exit(1)
-    return
   }
   wfs.mkdir_p(replace_dir)
   wfs.write_string(ref_path, replacement_id.to_hex() + "\n")
@@ -330,7 +310,6 @@ async fn replace_delete(
   if not(fs.is_file(ref_path)) {
     eprint_line("error: replace ref 'refs/replace/\{hex}' not found")
     @sys.exit(1)
-    return
   }
   wfs.remove_file(ref_path)
   print_line("Deleted replace ref '\{hex}'")
@@ -352,12 +331,10 @@ async fn replace_graft(
   guard commit_obj is Some(obj) else {
     eprint_line("error: object '\{commit_ref}' does not exist")
     @sys.exit(1)
-    return
   }
   if obj.obj_type != @bitcore.ObjectType::Commit {
     eprint_line("error: '\{commit_ref}' is not a commit")
     @sys.exit(1)
-    return
   }
   // Parse the commit content to extract headers and message
   let content_text = decode_bytes(obj.data)
@@ -382,7 +359,6 @@ async fn replace_graft(
       "error: new commit is the same as the old one: '\{commit_id.to_hex()}'",
     )
     @sys.exit(1)
-    return
   }
   // Create replace ref
   let replace_dir = git_dir + "/refs/replace"
@@ -392,7 +368,6 @@ async fn replace_graft(
       "error: replace ref 'refs/replace/\{commit_id.to_hex()}' already exists",
     )
     @sys.exit(1)
-    return
   }
   wfs.mkdir_p(replace_dir)
   wfs.write_string(ref_path, new_commit_id.to_hex() + "\n")
@@ -506,7 +481,6 @@ async fn replace_convert_graft_file(
   if not(fs.is_file(graft_path)) {
     eprint_line("error: could not read graft file '\{graft_path}'")
     @sys.exit(1)
-    return
   }
   let content = fs.read_file(graft_path) catch {
     _ => {
@@ -548,34 +522,3 @@ async fn replace_convert_graft_file(
   }
 }
 
-///|
-fn replace_glob_match(pattern : String, text : String) -> Bool {
-  let p = pattern.to_array()
-  let t = text.to_array()
-  let plen = p.length()
-  let tlen = t.length()
-  let mut pi = 0
-  let mut ti = 0
-  let mut star_pi = -1
-  let mut star_ti = -1
-  while ti < tlen {
-    if pi < plen && (p[pi] == t[ti] || p[pi] == '?') {
-      pi += 1
-      ti += 1
-    } else if pi < plen && p[pi] == '*' {
-      star_pi = pi
-      star_ti = ti
-      pi += 1
-    } else if star_pi >= 0 {
-      pi = star_pi + 1
-      star_ti += 1
-      ti = star_ti
-    } else {
-      return false
-    }
-  }
-  while pi < plen && p[pi] == '*' {
-    pi += 1
-  }
-  pi == plen
-}
