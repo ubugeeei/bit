@@ -1110,7 +1110,9 @@ fn write_index_entry_to_buf(
   }
   pos += 20
   // flags
-  let name_len = if e.path.length() < 0x0fff { e.path.length() } else { 0x0fff }
+  let path_bytes = @utf8.encode(e.path)
+  let path_byte_len = path_bytes.length()
+  let name_len = if path_byte_len < 0x0fff { path_byte_len } else { 0x0fff }
   let mut flags = name_len | ((stage & 0x3) << 12)
   let ext_flags = index_extended_flags(e.intent_to_add, skip_worktree)
   let has_extended = ext_flags != 0
@@ -1127,12 +1129,12 @@ fn write_index_entry_to_buf(
     pos += 2
   }
   // path bytes
-  for c in e.path {
-    buf[pos] = c.to_int().to_byte()
+  for i in 0..<path_byte_len {
+    buf[pos] = path_bytes[i]
     pos += 1
   }
   // NUL + padding to 8-byte alignment (already zeroed)
-  entry_start + index_entry_buf_size(e.path.length(), has_extended)
+  entry_start + index_entry_buf_size(path_byte_len, has_extended)
 }
 
 ///|
@@ -1154,7 +1156,10 @@ fn write_index_buf(
     if has_extended {
       version = 3
     }
-    total_size += index_entry_buf_size(e.path.length(), has_extended)
+    total_size += index_entry_buf_size(
+      @utf8.encode(e.path).length(),
+      has_extended,
+    )
   }
   let cache_tree_extension = match cache_tree {
     Some(tree) => index_cache_tree_extension_bytes(tree)
@@ -1342,7 +1347,10 @@ fn write_index_stage_buf(entries : Array[IndexStageEntry]) -> FixedArray[Byte] {
     if has_extended {
       version = 3
     }
-    total_size += index_entry_buf_size(item.entry.path.length(), has_extended)
+    total_size += index_entry_buf_size(
+      @utf8.encode(item.entry.path).length(),
+      has_extended,
+    )
   }
   total_size += 20
   let buf : FixedArray[Byte] = FixedArray::make(total_size, b'\x00')

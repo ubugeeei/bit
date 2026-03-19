@@ -68,7 +68,9 @@ test "parse_patches rename" {
 
 ///|
 test "parse_diff_git_header" {
-  let (old_name, new_name) = @apply.parse_diff_git_header("a/src/main.mbt b/src/main.mbt")
+  let (old_name, new_name) = @apply.parse_diff_git_header(
+    "a/src/main.mbt b/src/main.mbt",
+  )
   assert_eq(old_name, "src/main.mbt")
   assert_eq(new_name, "src/main.mbt")
 }

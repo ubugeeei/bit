@@ -158,9 +158,7 @@ fn replace_resolve_to_oid(
   rev : String,
 ) -> @bitcore.ObjectId raise Error {
   if rev.length() == 40 && is_hex_string(rev) {
-    {
-      return @bitcore.ObjectId::from_hex(rev)
-    }
+    return @bitcore.ObjectId::from_hex(rev)
   }
   match @bitrepo.rev_parse(fs, git_dir, rev) {
     Some(id) => id
@@ -385,31 +383,29 @@ fn replace_rebuild_commit(
   let mut in_header = true
   let mut wrote_parents = false
   let mut past_tree = false
+  fn append_str(s : String) {
+    for b in @utf8.encode(s) {
+      result.push(b)
+    }
+  }
   for line in lines {
     if in_header {
       if line == "\n" || line == "" {
         // End of header: if we haven't written parents yet, do so now
         if not(wrote_parents) {
           for parent_id in new_parents {
-            let pline = "parent " + parent_id.to_hex() + "\n"
-            for c in pline {
-              result.push(c.to_int().to_byte())
-            }
+            append_str("parent " + parent_id.to_hex() + "\n")
           }
           wrote_parents = true
         }
         in_header = false
         // Write the blank line separator
-        for c in line {
-          result.push(c.to_int().to_byte())
-        }
+        append_str(line)
         continue
       }
       if line.has_prefix("tree ") {
         // Keep the tree line
-        for c in line {
-          result.push(c.to_int().to_byte())
-        }
+        append_str(line)
         past_tree = true
         continue
       }
@@ -417,10 +413,7 @@ fn replace_rebuild_commit(
         // Skip original parent lines; we'll write new ones
         if not(wrote_parents) && past_tree {
           for parent_id in new_parents {
-            let pline = "parent " + parent_id.to_hex() + "\n"
-            for c in pline {
-              result.push(c.to_int().to_byte())
-            }
+            append_str("parent " + parent_id.to_hex() + "\n")
           }
           wrote_parents = true
         }
@@ -430,21 +423,14 @@ fn replace_rebuild_commit(
       // If we haven't written parents yet and we're past tree, do it now
       if not(wrote_parents) && past_tree {
         for parent_id in new_parents {
-          let pline = "parent " + parent_id.to_hex() + "\n"
-          for c in pline {
-            result.push(c.to_int().to_byte())
-          }
+          append_str("parent " + parent_id.to_hex() + "\n")
         }
         wrote_parents = true
       }
-      for c in line {
-        result.push(c.to_int().to_byte())
-      }
+      append_str(line)
     } else {
       // Message body: keep as-is
-      for c in line {
-        result.push(c.to_int().to_byte())
-      }
+      append_str(line)
     }
   }
   let fa = FixedArray::makei(result.length(), fn(i) { result[i] })
@@ -521,4 +507,3 @@ async fn replace_convert_graft_file(
     )
   }
 }
-

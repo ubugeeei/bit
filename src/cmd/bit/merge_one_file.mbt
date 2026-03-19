@@ -69,9 +69,7 @@ async fn handle_merge_one_file(args : Array[String]) -> Unit raise Error {
   if parent.length() > 0 {
     ensure_dir(parent)
   }
-  let content_bytes = Bytes::from_array(
-    result.content.to_array().map(fn(c) { c.to_int().to_byte() }),
-  )
+  let content_bytes = @utf8.encode(result.content)
   @fs.write_bytes_to_file(full_path, content_bytes) catch {
     err => {
       eprint_line("error: cannot write \{full_path}: \{err}")

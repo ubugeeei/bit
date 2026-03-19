@@ -415,9 +415,7 @@ async fn notes_add(
   }
   let target_hex = tid.to_hex()
   // Create blob for note content
-  let note_content = Bytes::from_array(
-    message.to_array().map(c => c.to_int().to_byte()),
-  )
+  let note_content = @utf8.encode(message)
   let note_id = @bitlib.write_loose_object(
     wfs,
     git_dir,
@@ -547,9 +545,7 @@ async fn notes_append(
     None => message
   }
   // Create blob for note content
-  let note_content = Bytes::from_array(
-    new_text.to_array().map(c => c.to_int().to_byte()),
-  )
+  let note_content = @utf8.encode(new_text)
   let note_id = @bitlib.write_loose_object(
     wfs,
     git_dir,
@@ -979,9 +975,7 @@ async fn notes_merge(
               let ours = note_text(db, rfs, existing)
               let theirs = note_text(db, rfs, e)
               let merged = merge_notes_union(ours, theirs)
-              let merged_content = Bytes::from_array(
-                merged.to_array().map(c => c.to_int().to_byte()),
-              )
+              let merged_content = @utf8.encode(merged)
               let merged_id = @bitlib.write_loose_object(
                 wfs,
                 git_dir,
@@ -996,9 +990,7 @@ async fn notes_merge(
               let ours = note_text(db, rfs, existing)
               let theirs = note_text(db, rfs, e)
               let merged = merge_notes_cat_sort_uniq(ours, theirs)
-              let merged_content = Bytes::from_array(
-                merged.to_array().map(c => c.to_int().to_byte()),
-              )
+              let merged_content = @utf8.encode(merged)
               let merged_id = @bitlib.write_loose_object(
                 wfs,
                 git_dir,

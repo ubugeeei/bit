@@ -243,4 +243,3 @@ async fn handle_upload_archive(args : Array[String]) -> Unit raise Error {
 async fn upload_archive_send_nack(msg : String) -> Unit raise Error {
   @stdio.stdout.write(@protocol.pktline_encode("NACK \{msg}\n"))
 }
-

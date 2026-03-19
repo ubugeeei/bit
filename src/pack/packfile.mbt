@@ -1068,8 +1068,8 @@ fn build_tree_content(entries : Array[@bit.TreeEntry]) -> Bytes {
       content.push(c.to_int().to_byte())
     }
     content.push(b' ')
-    for c in entry.name {
-      content.push(c.to_int().to_byte())
+    for b in @utf8.encode(entry.name) {
+      content.push(b)
     }
     content.push(b'\x00')
     for b in entry.id.bytes {
@@ -1107,10 +1107,5 @@ fn build_commit_content(commit : @bit.Commit) -> Bytes {
   content.write_char('\n')
   content.write_char('\n')
   content.write_string(commit.message)
-  let str = content.to_string()
-  let bytes : Array[Byte] = []
-  for c in str {
-    bytes.push(c.to_int().to_byte())
-  }
-  pack_array_to_bytes(bytes)
+  @utf8.encode(content.to_string())
 }

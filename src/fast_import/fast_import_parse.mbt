@@ -36,8 +36,8 @@ pub fn fast_import_parse_data(
       if buf.length() > 0 {
         buf.push(b'\n')
       }
-      for c in l {
-        buf.push(c.to_int().to_byte())
+      for b in @utf8.encode(l) {
+        buf.push(b)
       }
       idx += 1
     }
@@ -60,19 +60,20 @@ pub fn fast_import_parse_data(
           remaining -= 1
         }
       }
+      let encoded = @utf8.encode(l)
       if line_bytes <= remaining {
-        for c in l {
-          buf.push(c.to_int().to_byte())
+        for b in encoded {
+          buf.push(b)
         }
         remaining -= line_bytes
         idx += 1
       } else {
         let mut taken = 0
-        for c in l {
+        for i in 0..<encoded.length() {
           if taken >= remaining {
             break
           }
-          buf.push(c.to_int().to_byte())
+          buf.push(encoded[i])
           taken += 1
         }
         remaining = 0
@@ -88,13 +89,9 @@ pub fn fast_import_parse_data(
 }
 
 ///|
-/// Count bytes in a string (each character = 1 byte, ASCII assumption).
+/// Count UTF-8 encoded byte length of a string.
 pub fn fast_import_parse_string_byte_count(s : String) -> Int {
-  let mut count = 0
-  for _c in s {
-    count += 1
-  }
-  count
+  @utf8.encode(s).length()
 }
 
 ///|

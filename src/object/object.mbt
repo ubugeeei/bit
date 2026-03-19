@@ -175,10 +175,8 @@ pub fn create_tree(entries : Array[TreeEntry]) -> (ObjectId, Bytes) {
     }
     // space
     content.push(b' ')
-    // name (as bytes)
-    for c in entry.name {
-      content.push(c.to_int().to_byte())
-    }
+    // name (as UTF-8 bytes)
+    object_append_utf8_string(content, entry.name)
     // null byte
     content.push(b'\x00')
     // 20-byte SHA
@@ -210,9 +208,7 @@ pub fn serialize_tree(entries : Array[TreeEntry]) -> Bytes {
       content.push(c.to_int().to_byte())
     }
     content.push(b' ')
-    for c in entry.name {
-      content.push(c.to_int().to_byte())
-    }
+    object_append_utf8_string(content, entry.name)
     content.push(b'\x00')
     for b in entry.id.bytes {
       content.push(b)

@@ -2,6 +2,7 @@ import {
   "mizchi/bit" @bit,
   "mizchi/bit/pack" @pack,
   "moonbitlang/async" @async,
+  "moonbitlang/core/encoding/utf8" @utf8,
 }
 
 import {

@@ -827,11 +827,7 @@ async fn fast_import_parse_tag(
   buf.write_string("\n")
   buf.write_string(message)
   let tag_content_str = buf.to_string()
-  let tag_content : Array[Byte] = []
-  for c in tag_content_str {
-    tag_content.push(c.to_int().to_byte())
-  }
-  let tag_bytes = bytes_from_array(tag_content)
+  let tag_bytes = @utf8.encode(tag_content_str)
   let tag_id = @bitlib.write_loose_object(
     fs,
     git_dir,

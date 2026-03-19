@@ -67,15 +67,24 @@ test "get_config_value_from_content" {
     #|[user]
     #|	name = Test User
   let bare = @config_parse.get_config_value_from_content(
-    content, "core.bare", None, false,
+    content,
+    "core.bare",
+    None,
+    false,
   )
   assert_eq(bare, Some("false"))
   let name = @config_parse.get_config_value_from_content(
-    content, "user.name", None, false,
+    content,
+    "user.name",
+    None,
+    false,
   )
   assert_eq(name, Some("Test User"))
   let missing = @config_parse.get_config_value_from_content(
-    content, "core.missing", None, false,
+    content,
+    "core.missing",
+    None,
+    false,
   )
   assert_eq(missing, None)
 }

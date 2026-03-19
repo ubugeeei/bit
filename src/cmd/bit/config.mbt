@@ -3531,12 +3531,8 @@ fn ensure_trailing_newline(content : String) -> String {
 
 ///|
 async fn print_nul_terminated(s : String) -> Unit {
-  let arr : Array[Byte] = []
-  for c in s {
-    arr.push(c.to_int().to_byte())
-  }
-  let zero : Byte = 0
-  arr.push(zero)
+  let arr : Array[Byte] = @utf8.encode(s).to_array()
+  arr.push(b'\x00')
   @stdio.stdout.write(bytes_from_array(arr))
 }
 

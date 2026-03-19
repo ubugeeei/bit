@@ -20,7 +20,8 @@ fn pkt_array_to_bytes(arr : Array[Byte]) -> Bytes {
 /// Format: {4-hex-length}{payload}
 /// Length includes the 4-byte header
 pub fn pktline_encode(data : String) -> Bytes {
-  let len = data.length() + 4
+  let payload = @utf8.encode(data)
+  let len = payload.length() + 4
   let result : Array[Byte] = []
 
   // 4-byte hex length
@@ -30,8 +31,8 @@ pub fn pktline_encode(data : String) -> Bytes {
   result.push(int_to_hex_char(len & 0xf).to_int().to_byte())
 
   // Payload
-  for c in data {
-    result.push(c.to_int().to_byte())
+  for b in payload {
+    result.push(b)
   }
   pkt_array_to_bytes(result)
 }
