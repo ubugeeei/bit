@@ -40,8 +40,20 @@ async fn main_js_async() -> Unit {
             @sys.exit(1)
           }
         }
+      "clone" | "fetch" | "pull" | "push" => {
+        eprint_line(
+          "fatal: '\{cmd}' is not available on JS target (no native network/SSH support).",
+        )
+        eprint_line(
+          "hint: Use relay clone instead: bit clone relay+https://relay.example.com/<session>",
+        )
+        eprint_line(
+          "hint: Or use the native binary: moon run src/cmd/bit -- \{cmd} <url>",
+        )
+        @sys.exit(1)
+      }
       _ => {
-        println("bit: '\{cmd}' is not supported in JS target")
+        eprint_line("bit: '\{cmd}' is not supported in JS target")
         @sys.exit(1)
       }
     }

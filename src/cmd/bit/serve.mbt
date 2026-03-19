@@ -386,6 +386,7 @@ async fn serve_respond(
   response_headers : Map[String, String],
   body_base64 : String,
   session_token? : String = "",
+  incoming_refs? : Array[String] = [],
 ) -> Unit raise Error {
   let url = if session_token.length() > 0 {
     "\{base_url}/api/v1/serve/respond?session=\{session_id}&session_token=\{session_token}"
@@ -402,6 +403,13 @@ async fn serve_respond(
   payload_obj["status"] = Json::number(status.to_double())
   payload_obj["headers"] = Json::object(headers_obj)
   payload_obj["body_base64"] = Json::string(body_base64)
+  if status == 200 && incoming_refs.length() > 0 {
+    let refs_arr : Array[Json] = []
+    for ref_name in incoming_refs {
+      refs_arr.push(Json::string(ref_name))
+    }
+    payload_obj["incoming_refs"] = Json::array(refs_arr)
+  }
   let payload = Json::object(payload_obj)
   let payload_text = payload.stringify()
   let payload_bytes = @encoding.encode(@encoding.Encoding::UTF8, payload_text)
@@ -453,7 +461,7 @@ async fn serve_handle_git_request(
   repo_root : String,
   req : ServePollRequest,
   allow_push? : Bool = false,
-) -> (Int, Map[String, String], Bytes) raise Error {
+) -> (Int, Map[String, String], Bytes, Array[String]) raise Error {
   let path = req.path
   if path.has_prefix("/info/refs") {
     let service = serve_extract_query_param(path, "service")
@@ -464,7 +472,7 @@ async fn serve_handle_git_request(
             @encoding.Encoding::UTF8,
             "receive-pack not enabled",
           )
-          return (403, {}, error_body)
+          return (403, {}, error_body, [])
         }
         let fs = OsFs::new()
         let root = normalize_repo_root(repo_root)
@@ -476,7 +484,7 @@ async fn serve_handle_git_request(
         let headers : Map[String, String] = {
           "Content-Type": "application/x-git-receive-pack-advertisement",
         }
-        (200, headers, full_body)
+        (200, headers, full_body, [])
       }
       _ => {
         // Default: git-upload-pack
@@ -490,7 +498,7 @@ async fn serve_handle_git_request(
         let headers : Map[String, String] = {
           "Content-Type": "application/x-git-upload-pack-advertisement",
         }
-        (200, headers, full_body)
+        (200, headers, full_body, [])
       }
     }
   } else if path.has_prefix("/git-receive-pack") {
@@ -499,7 +507,7 @@ async fn serve_handle_git_request(
         @encoding.Encoding::UTF8,
         "receive-pack not enabled",
       )
-      return (403, {}, error_body)
+      return (403, {}, error_body, [])
     }
     let input_bytes = match req.body_base64 {
       Some(b64) => serve_base64_decode(b64)
@@ -514,10 +522,12 @@ async fn serve_handle_git_request(
     let out = @bitlib.receive_pack(fs, fs, root, rewritten_bytes)
     // Rewrite status response: translate rewritten refs back to original names
     let final_out = serve_rewrite_status_response(out, original_refnames)
+    // Collect rewritten ref names (the refs/relay/incoming/... paths)
+    let incoming_refs : Array[String] = original_refnames.keys().collect()
     let headers : Map[String, String] = {
       "Content-Type": "application/x-git-receive-pack-result",
     }
-    (200, headers, final_out)
+    (200, headers, final_out, incoming_refs)
   } else if path.has_prefix("/git-upload-pack") {
     let input_bytes = match req.body_base64 {
       Some(b64) => serve_base64_decode(b64)
@@ -540,10 +550,10 @@ async fn serve_handle_git_request(
     let headers : Map[String, String] = {
       "Content-Type": "application/x-git-upload-pack-result",
     }
-    (200, headers, out)
+    (200, headers, out, [])
   } else {
     let error_body = @encoding.encode(@encoding.Encoding::UTF8, "not found")
-    (404, {}, error_body)
+    (404, {}, error_body, [])
   }
 }
 
@@ -800,7 +810,7 @@ async fn handle_hub_serve(args : Array[String]) -> Unit raise Error {
     }
     for req in requests {
       print_line("[\{session_id}] \{req.req_method} \{req.path}")
-      let (status, response_headers, body) = serve_handle_git_request(
+      let (status, response_headers, body, incoming_refs) = serve_handle_git_request(
         repo_root,
         req,
         allow_push=options.allow_push,
@@ -811,7 +821,7 @@ async fn handle_hub_serve(args : Array[String]) -> Unit raise Error {
             @encoding.Encoding::UTF8,
             "internal server error",
           )
-          (500, {}, error_body)
+          (500, {}, error_body, [])
         }
       }
       // Broadcast feature notification on successful receive-pack
@@ -841,6 +851,7 @@ async fn handle_hub_serve(args : Array[String]) -> Unit raise Error {
         response_headers,
         body_b64,
         session_token~,
+        incoming_refs~,
       ) catch {
         err => {
           if @async.is_cancellation_error(err) {
