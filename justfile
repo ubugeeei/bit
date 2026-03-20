@@ -133,14 +133,18 @@ size-js-lib-minimal-bundle: bundle-js-lib-minimal
 verify-js-lib-treeshake: bundle-js-lib-minimal bundle-js-lib-git-ops
     node tools/verify-lib-js-treeshake.mjs
 
-# Build the GitHub Pages demo artifact
-build-pages-demo: build-js-lib
-    mkdir -p target/pages
-    bun build --target browser --format esm \
-      --outfile target/pages/app.js \
+# Build the checked-in browser demo bundle served from /docs
+build-docs-demo: build-js-lib
+    bun build --target browser --format esm --production \
+      --outfile docs/demo/app.js \
       docs/demo/main.js
+
+# Build the GitHub Pages demo artifact
+build-pages-demo: build-docs-demo
+    mkdir -p target/pages
     cp docs/demo/index.html target/pages/index.html
     cp docs/demo/styles.css target/pages/styles.css
+    cp docs/demo/app.js target/pages/app.js
 
 # Measure the built GitHub Pages demo JS bundle
 size-pages-demo: build-pages-demo
