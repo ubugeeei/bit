@@ -48,6 +48,7 @@ const elements = {
   consoleTitle: document.querySelector("#console-title"),
   consoleSubtitle: document.querySelector("#console-subtitle"),
   storageBanner: document.querySelector("#storage-banner"),
+  focusView: document.querySelector("#focus-view"),
   connectStorage: document.querySelector("#connect-storage"),
   reloadStorage: document.querySelector("#reload-storage"),
   clearStorage: document.querySelector("#clear-storage"),
@@ -113,7 +114,7 @@ const loadSnapshotIntoEditor = () => {
 };
 
 const collectStatusGroups = (currentStatus) => {
-  const groups = [
+  return [
     ["Untracked", currentStatus.untracked],
     ["Staged Added", currentStatus.stagedAdded],
     ["Staged Modified", currentStatus.stagedModified],
@@ -121,8 +122,15 @@ const collectStatusGroups = (currentStatus) => {
     ["Unstaged Modified", currentStatus.unstagedModified],
     ["Unstaged Deleted", currentStatus.unstagedDeleted],
   ];
-  return groups;
 };
+
+const summarizeStatus = (currentStatus) => ({
+  staged: currentStatus.stagedAdded.length
+    + currentStatus.stagedModified.length
+    + currentStatus.stagedDeleted.length,
+  unstaged: currentStatus.unstagedModified.length + currentStatus.unstagedDeleted.length,
+  untracked: currentStatus.untracked.length,
+});
 
 const readControllerView = (controller) => {
   const summary = summarizeWorkingSnapshot(controller.host);
@@ -192,18 +200,20 @@ const renderStatus = (view) => {
     return;
   }
   const groups = collectStatusGroups(view.currentStatus)
+    .filter(([, items]) => items.length > 0)
     .map(([title, items]) => `
       <article class="status-group">
         <h4>${title}</h4>
-        ${
-          items.length
-            ? `<ul class="status-list">${items.map((item) => `<li><code>${item}</code></li>`).join("")}</ul>`
-            : `<p class="status-empty">No entries.</p>`
-        }
+        <ul class="status-list">${items.map((item) => `<li><code>${item}</code></li>`).join("")}</ul>
       </article>
     `)
     .join("");
-  elements.statusView.innerHTML = groups;
+  elements.statusView.innerHTML = groups || `
+    <article class="status-group status-group-clean">
+      <h4>Working tree clean</h4>
+      <p class="status-empty">No staged or unstaged changes right now.</p>
+    </article>
+  `;
 };
 
 const renderHistory = (view) => {
@@ -267,12 +277,59 @@ const renderSnapshot = (controller, view) => {
 };
 
 const renderEventLog = () => {
-  elements.eventLog.innerHTML = eventLog.map((entry) => `
+  elements.eventLog.innerHTML = eventLog.slice(0, 8).map((entry) => `
     <li>
       <strong>${entry.at.toLocaleTimeString()}</strong>
       <div>${entry.message}</div>
     </li>
   `).join("");
+};
+
+const renderFocus = (controller, view) => {
+  const currentBranch = view.branches.find((branch) => branch.isCurrent)?.name ?? "main";
+  const statusSummary = summarizeStatus(view.currentStatus);
+  const recentEvent = eventLog[0];
+  const workingFiles = view.summary.workingFiles
+    .map((path) => trimRelativePath(path.replace(`${REPO_ROOT}/`, "")))
+    .slice(0, 4);
+
+  elements.focusView.innerHTML = `
+    <article class="focus-card">
+      <h3>Now</h3>
+      <div class="focus-metrics">
+        <span class="status-chip">HEAD ${currentBranch}</span>
+        <span class="status-chip">${statusSummary.staged} staged</span>
+        <span class="status-chip">${statusSummary.unstaged} unstaged</span>
+        <span class="status-chip">${statusSummary.untracked} untracked</span>
+      </div>
+    </article>
+    <article class="focus-card">
+      <h3>Editing</h3>
+      <p><code>${state.filePath || DEFAULT_FILE_PATH}</code></p>
+      <div class="focus-metrics">
+        ${workingFiles.length
+          ? workingFiles.map((path) => (
+            `<button class="snapshot-chip" data-focus-path="${path}" type="button">${path}</button>`
+          )).join("")
+          : `<span class="status-chip">No files yet</span>`}
+      </div>
+    </article>
+    <article class="focus-card">
+      <h3>Latest activity</h3>
+      <p>${recentEvent?.message ?? controller.getBanner()}</p>
+      <div class="focus-note">${recentEvent ? recentEvent.at.toLocaleTimeString() : controller.accentTone}</div>
+    </article>
+  `;
+
+  for (const button of elements.focusView.querySelectorAll("[data-focus-path]")) {
+    button.addEventListener("click", () => {
+      state.filePath = button.dataset.focusPath;
+      if (!loadSnapshotIntoEditor()) {
+        logEvent(`File ${state.filePath} is not present in this repo`, "error");
+      }
+      render();
+    });
+  }
 };
 
 const renderBranchStrip = (view) => {
@@ -323,6 +380,7 @@ const render = () => {
   elements.fileContent.value = state.fileContent;
   elements.commitMessage.value = state.commitMessage;
   elements.branchName.value = state.branchName;
+  renderFocus(controller, view);
   renderStatus(view);
   renderHistory(view);
   renderSnapshot(controller, view);
