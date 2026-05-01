@@ -172,20 +172,17 @@ async fn delegate_log_to_real_git(args : Array[String], cwd : String) -> Unit {
 }
 
 ///|
-fn log_format_requests_signature_display(format : String) -> Bool {
+fn log_format_requests_signature_placeholder(format : String) -> Bool {
   format.contains("%G")
 }
 
 ///|
-fn log_args_request_signature_display(args : Array[String]) -> Bool {
+fn log_args_request_signature_placeholder(args : Array[String]) -> Bool {
   let mut i = 0
   while i < args.length() {
     let arg = args[i]
-    if arg == "--show-signature" {
-      return true
-    }
     if (arg == "--pretty" || arg == "--format") && i + 1 < args.length() {
-      if log_format_requests_signature_display(args[i + 1]) {
+      if log_format_requests_signature_placeholder(args[i + 1]) {
         return true
       }
       i += 2
@@ -193,15 +190,80 @@ fn log_args_request_signature_display(args : Array[String]) -> Bool {
     }
     if arg.has_prefix("--pretty=") {
       let value = String::unsafe_substring(arg, start=9, end=arg.length())
-      if log_format_requests_signature_display(value) {
+      if log_format_requests_signature_placeholder(value) {
         return true
       }
     }
     if arg.has_prefix("--format=") {
       let value = String::unsafe_substring(arg, start=9, end=arg.length())
-      if log_format_requests_signature_display(value) {
+      if log_format_requests_signature_placeholder(value) {
         return true
       }
+    }
+    i += 1
+  }
+  false
+}
+
+///|
+fn log_args_signature_display_override(args : Array[String]) -> Bool? {
+  let mut display_override : Bool? = None
+  for arg in args {
+    match arg {
+      "--show-signature" => display_override = Some(true)
+      "--no-show-signature" => display_override = Some(false)
+      _ => ()
+    }
+  }
+  display_override
+}
+
+///|
+fn log_args_signature_display_enabled(
+  args : Array[String],
+  git_dir : String,
+) -> Bool {
+  match log_args_signature_display_override(args) {
+    Some(value) => value
+    None =>
+      git_dir.length() > 0 && log_signature_display_config_enabled(git_dir)
+  }
+}
+
+///|
+fn log_signature_format_value_needs_fallback(value : String) -> Bool {
+  let actual = if value.has_prefix("format:") {
+    string_slice_from(value, 7)
+  } else if value.has_prefix("tformat:") {
+    string_slice_from(value, 8)
+  } else {
+    value
+  }
+  actual == "oneline" || !actual.contains("%")
+}
+
+///|
+fn log_args_signature_display_needs_fallback(args : Array[String]) -> Bool {
+  let mut i = 0
+  while i < args.length() {
+    let arg = args[i]
+    match arg {
+      "--graph" | "--oneline" | "-g" | "--walk-reflogs" => return true
+      "--pretty" | "--format" if i + 1 < args.length() => {
+        if log_signature_format_value_needs_fallback(args[i + 1]) {
+          return true
+        }
+        i += 1
+      }
+      _ if arg.has_prefix("--pretty=") =>
+        if log_signature_format_value_needs_fallback(string_slice_from(arg, 9)) {
+          return true
+        }
+      _ if arg.has_prefix("--format=") =>
+        if log_signature_format_value_needs_fallback(string_slice_from(arg, 9)) {
+          return true
+        }
+      _ => ()
     }
     i += 1
   }
@@ -224,28 +286,189 @@ fn log_signature_display_config_enabled(git_dir : String) -> Bool {
 
 ///|
 fn log_need_real_git(args : Array[String], git_dir? : String = "") -> Bool {
-  if log_args_request_signature_display(args) {
+  if log_args_request_signature_placeholder(args) {
     return true
   }
-  if git_dir.length() > 0 && log_signature_display_config_enabled(git_dir) {
+  if log_args_signature_display_enabled(args, git_dir) {
+    if log_args_signature_display_needs_fallback(args) {
+      return true
+    }
+    if git_dir.length() > 0 && signing_format(git_dir) == "ssh" {
+      return true
+    }
+  }
+  let mut has_graph = false
+  let mut has_ancestry_path = false
+  for arg in args {
+    if arg.has_prefix("--ancestry-path=") {
+      return true
+    }
+    if arg == "--graph" {
+      has_graph = true
+    }
+    if arg == "--ancestry-path" {
+      has_ancestry_path = true
+    }
+  }
+  if has_graph && has_ancestry_path {
     return true
   }
   for arg in args {
-    if arg == "--stdin" ||
-      arg == "--boundary" ||
-      arg == "--parents" ||
-      arg == "--full-history" ||
-      arg == "--ancestry-path" ||
-      arg == "--simplify-by-decoration" ||
-      arg == "--simplify-merges" ||
+    if arg == "--simplify-by-decoration" ||
       arg == "--show-pulls" ||
       arg == "--exclude-first-parent-only" ||
-      arg == "--full-diff" ||
-      arg.has_prefix("--ancestry-path=") {
+      arg == "--full-diff" {
       return true
     }
   }
   false
+}
+
+///|
+fn log_append_signature_output_text(
+  lines : Array[String],
+  text : String,
+) -> Unit {
+  let normalized = text
+    .replace_all(old="\r\n", new="\n")
+    .replace_all(old="\r", new="\n")
+  for line_view in normalized.split("\n") {
+    let line = line_view.to_string()
+    if line.length() == 0 || line.has_prefix("[GNUPG:]") {
+      continue
+    }
+    lines.push(line)
+  }
+}
+
+///|
+fn log_signature_output_lines(
+  stdout : String,
+  stderr : String,
+) -> Array[String] {
+  let lines : Array[String] = []
+  log_append_signature_output_text(lines, stderr)
+  log_append_signature_output_text(lines, stdout)
+  lines
+}
+
+///|
+async fn log_collect_detached_signature_output_lines(
+  fs : OsFs,
+  root : String,
+  git_dir : String,
+  format : String,
+  payload : Bytes,
+  signature : String,
+) -> Array[String] raise Error {
+  let command = signing_program(git_dir, format)
+  let (program, base_args) = signing_split_program(command)
+  let temp_base = root +
+    "/bit-log-verify-" +
+    format +
+    "-" +
+    get_current_timestamp().to_string()
+  let payload_path = temp_base + ".payload"
+  let sig_path = temp_base + ".sig"
+  fs.write_file(payload_path, payload) catch {
+    err =>
+      raise @bitcore.GitError::InvalidObject(
+        "failed to write temporary verify payload: \{err}",
+      )
+  }
+  fs.write_string(sig_path, signature) catch {
+    err => {
+      signing_try_remove_file(fs, payload_path)
+      raise @bitcore.GitError::InvalidObject(
+        "failed to write temporary signature: \{err}",
+      )
+    }
+  }
+  let args : Array[String] = []
+  for arg in base_args {
+    args.push(arg)
+  }
+  args.push("--verify")
+  args.push(sig_path)
+  args.push(payload_path)
+  let (code, stdout, stderr) = signing_collect_output_text(root, program, args)
+  signing_try_remove_file(fs, payload_path)
+  signing_try_remove_file(fs, sig_path)
+  let lines = log_signature_output_lines(stdout, stderr)
+  if code != 0 && lines.length() == 0 {
+    lines.push("error: signature verification failed")
+  }
+  lines
+}
+
+///|
+async fn log_collect_commit_signature_output_lines(
+  fs : OsFs,
+  root : String,
+  git_dir : String,
+  db : @bitlib.ObjectDb,
+  commit_id : @bitcore.ObjectId,
+) -> Array[String] raise Error {
+  match db.get(fs, commit_id) {
+    Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit =>
+      match signing_extract_commit_signature(obj.data) {
+        Some((payload, signature)) => {
+          let format = signing_detect_signature_format(git_dir, signature)
+          if format == "ssh" {
+            let verified = signing_verify_payload(
+              fs, root, git_dir, payload, signature,
+            ) catch {
+              err => return ["error: could not verify commit signature: \{err}"]
+            }
+            if verified {
+              []
+            } else {
+              ["error: signature verification failed"]
+            }
+          } else {
+            log_collect_detached_signature_output_lines(
+              fs, root, git_dir, format, payload, signature,
+            )
+          }
+        }
+        None => []
+      }
+    _ => []
+  }
+}
+
+///|
+async fn log_append_commit_signature_output_lines(
+  out : Array[String],
+  fs : OsFs,
+  root : String,
+  git_dir : String,
+  db : @bitlib.ObjectDb,
+  commit_id : @bitcore.ObjectId,
+) -> Unit raise Error {
+  let lines = log_collect_commit_signature_output_lines(
+    fs, root, git_dir, db, commit_id,
+  )
+  for line in lines {
+    out.push(line)
+  }
+}
+
+///|
+async fn log_emit_commit_signature_output_lines(
+  fs : OsFs,
+  root : String,
+  git_dir : String,
+  db : @bitlib.ObjectDb,
+  commit_id : @bitcore.ObjectId,
+  line_prefix : String,
+) -> Unit raise Error {
+  let lines = log_collect_commit_signature_output_lines(
+    fs, root, git_dir, db, commit_id,
+  )
+  for line in lines {
+    log_emit_output(line, true, line_prefix)
+  }
 }
 
 ///|
@@ -312,6 +535,93 @@ fn log_should_use_storage_runtime_in_repo(
 ) -> Bool {
   log_should_use_storage_runtime(args) &&
   !log_storage_runtime_blocked_by_repo_config(rfs, git_dir)
+}
+
+///|
+fn log_parse_stdin_input(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  input : String,
+  revs : Array[String],
+  range_excludes : Array[String],
+  symmetric_ranges : Array[(String, String)],
+  pathspecs : Array[String],
+  branch_patterns : Array[String],
+) -> (Bool, Bool) raise Error {
+  let mut saw_revision_input = false
+  let mut all_refs = false
+  let mut stdin_end_of_options = false
+  let mut stdin_pathspec_mode = false
+  let mut stdin_not_mode = false
+  for line_view in input.split("\n") {
+    let line = trim_string(line_view.to_string())
+    if line.length() == 0 || line.has_prefix("#") {
+      continue
+    }
+    if stdin_pathspec_mode {
+      pathspecs.push(line)
+      continue
+    }
+    if stdin_end_of_options {
+      saw_revision_input = true
+      log_push_revision_input(
+        line, revs, range_excludes, symmetric_ranges, stdin_not_mode,
+      )
+      continue
+    }
+    if line == "--" {
+      stdin_pathspec_mode = true
+      continue
+    }
+    if line == "--end-of-options" {
+      stdin_end_of_options = true
+      continue
+    }
+    if line == "--not" {
+      stdin_not_mode = !stdin_not_mode
+      continue
+    }
+    if line == "--all" {
+      all_refs = true
+      saw_revision_input = true
+      continue
+    }
+    if line == "--branches" {
+      branch_patterns.push("*")
+      saw_revision_input = true
+      continue
+    }
+    if line == "--glob" {
+      raise @bitcore.GitError::InvalidObject("Option '--glob' requires a value")
+    }
+    if line.has_prefix("--branches=") {
+      branch_patterns.push(
+        String::unsafe_substring(line, start=11, end=line.length()),
+      )
+      saw_revision_input = true
+      continue
+    }
+    if line.has_prefix("--glob=") {
+      log_append_glob_targets(
+        rfs,
+        git_dir,
+        String::unsafe_substring(line, start=7, end=line.length()),
+        revs,
+      )
+      saw_revision_input = true
+      continue
+    }
+    if line.has_prefix("-") && !line.has_prefix("^") {
+      raise @bitcore.GitError::InvalidObject(
+        "invalid option '" + line + "' in --stdin mode",
+      )
+    }
+    saw_revision_input = true
+    log_push_revision_input(
+      line, revs, range_excludes, symmetric_ranges, stdin_not_mode,
+    )
+  }
+  (saw_revision_input, all_refs)
 }
 
 ///|
@@ -960,6 +1270,150 @@ fn log_build_left_right_markers(
     }
   }
   markers
+}
+
+///|
+fn log_add_resolved_ancestry_root(
+  roots : Array[@bitcore.ObjectId],
+  seen : Map[String, Bool],
+  db : @bitlib.ObjectDb,
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  spec : String,
+  ignore_missing : Bool,
+) -> Unit raise Error {
+  match @bitrepo.rev_parse(rfs, git_dir, spec) {
+    Some(id) => {
+      let commit_id = match peel_to_commit(db, rfs, id) {
+        Some(peeled) => peeled
+        None => id
+      }
+      let hex = commit_id.to_hex()
+      if !seen.contains(hex) {
+        seen[hex] = true
+        roots.push(commit_id)
+      }
+    }
+    None if ignore_missing => ()
+    None => raise @bitcore.GitError::InvalidObject("Unknown revision: " + spec)
+  }
+}
+
+///|
+fn log_resolve_ancestry_roots(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  ancestry_path : Bool,
+  ancestry_path_specs : Array[String],
+  range_excludes : Array[String],
+  symmetric_ranges : Array[(String, String)],
+  ignore_missing : Bool,
+) -> Array[@bitcore.ObjectId] raise Error {
+  let roots : Array[@bitcore.ObjectId] = []
+  if !ancestry_path && ancestry_path_specs.length() == 0 {
+    return roots
+  }
+  let seen : Map[String, Bool] = {}
+  let db = @bitlib.ObjectDb::load(rfs, log_resolve_common_git_dir(rfs, git_dir))
+  if ancestry_path_specs.length() > 0 {
+    for spec in ancestry_path_specs {
+      log_add_resolved_ancestry_root(
+        roots, seen, db, rfs, git_dir, spec, ignore_missing,
+      )
+    }
+  } else {
+    for spec in range_excludes {
+      log_add_resolved_ancestry_root(
+        roots, seen, db, rfs, git_dir, spec, ignore_missing,
+      )
+    }
+    for pair in symmetric_ranges {
+      let left_spec = pair.0
+      let right_spec = pair.1
+      match
+        (
+          @bitrepo.rev_parse(rfs, git_dir, left_spec),
+          @bitrepo.rev_parse(rfs, git_dir, right_spec),
+        ) {
+        (Some(left_id), Some(right_id)) => {
+          let left_commit = match peel_to_commit(db, rfs, left_id) {
+            Some(id) => id
+            None => left_id
+          }
+          let right_commit = match peel_to_commit(db, rfs, right_id) {
+            Some(id) => id
+            None => right_id
+          }
+          match log_find_merge_base(rfs, git_dir, left_commit, right_commit) {
+            Some(base_id) => {
+              let hex = base_id.to_hex()
+              if !seen.contains(hex) {
+                seen[hex] = true
+                roots.push(base_id)
+              }
+            }
+            None => ()
+          }
+        }
+        _ if ignore_missing => ()
+        _ =>
+          raise @bitcore.GitError::InvalidObject(
+            "Unknown revision in symmetric range",
+          )
+      }
+    }
+  }
+  if roots.length() == 0 {
+    raise @bitcore.GitError::InvalidObject(
+      "--ancestry-path given but there are no bottom commits",
+    )
+  }
+  roots
+}
+
+///|
+fn log_commit_has_ancestor(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  commit_id : @bitcore.ObjectId,
+  ancestor_ids : Array[@bitcore.ObjectId],
+  first_parent? : Bool = false,
+) -> Bool raise Error {
+  if ancestor_ids.length() == 0 {
+    return true
+  }
+  let ancestors : Map[String, Bool] = {}
+  for id in ancestor_ids {
+    ancestors[id.to_hex()] = true
+  }
+  let db = @bitlib.ObjectDb::load(rfs, log_resolve_common_git_dir(rfs, git_dir))
+  let seen : Map[String, Bool] = {}
+  let queue : Array[@bitcore.ObjectId] = [commit_id]
+  while queue.length() > 0 {
+    let current = queue.unsafe_pop()
+    let hex = current.to_hex()
+    if ancestors.contains(hex) {
+      return true
+    }
+    if seen.contains(hex) {
+      continue
+    }
+    seen[hex] = true
+    match db.get(rfs, current) {
+      Some(o) if o.obj_type == @bitcore.ObjectType::Commit => {
+        let info = @bitcore.parse_commit(o.data)
+        if first_parent && info.parents.length() > 0 {
+          queue.push(info.parents[0])
+        } else {
+          for parent in info.parents {
+            queue.push(parent)
+          }
+        }
+      }
+      _ => ()
+    }
+  }
+  false
 }
 
 ///|
@@ -2228,6 +2682,92 @@ fn log_commit_matches_pathspecs(
 }
 
 ///|
+fn log_tree_file_entries_same(
+  left : @bitlib.TreeFileEntry?,
+  right : @bitlib.TreeFileEntry?,
+) -> Bool {
+  match (left, right) {
+    (None, None) => true
+    (Some(a), Some(b)) => a.id == b.id && a.mode == b.mode
+    _ => false
+  }
+}
+
+///|
+fn log_trees_same_for_pathspecs(
+  rfs : &@bitcore.RepoFileSystem,
+  db : @bitlib.ObjectDb,
+  left_tree : @bitcore.ObjectId,
+  right_tree : @bitcore.ObjectId,
+  pathspecs : Array[String],
+) -> Bool raise Error {
+  let left_files = @bitlib.collect_tree_files(db, rfs, left_tree)
+  let right_files = @bitlib.collect_tree_files(db, rfs, right_tree)
+  let paths : Map[String, Bool] = {}
+  for item in left_files.to_array() {
+    let path = item.0
+    if diff_path_matches_filters(path, pathspecs) {
+      paths[path] = true
+    }
+  }
+  for item in right_files.to_array() {
+    let path = item.0
+    if diff_path_matches_filters(path, pathspecs) {
+      paths[path] = true
+    }
+  }
+  for item in paths.to_array() {
+    let path = item.0
+    if !log_tree_file_entries_same(left_files.get(path), right_files.get(path)) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn log_commit_matches_simplify_merges(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  db : @bitlib.ObjectDb,
+  commit_id : @bitcore.ObjectId,
+  pathspecs : Array[String],
+  simplify_merges : Bool,
+) -> Bool raise Error {
+  if !simplify_merges || pathspecs.length() == 0 {
+    return true
+  }
+  let obj = db.get(rfs, commit_id)
+  guard obj is Some(o) else { return true }
+  if o.obj_type != @bitcore.ObjectType::Commit {
+    return true
+  }
+  let info = @bitcore.parse_commit(o.data)
+  let parents = log_resolve_parents(rfs, git_dir, commit_id, info.parents)
+  if parents.length() < 2 {
+    return true
+  }
+  for parent in parents {
+    match db.get(rfs, parent) {
+      Some(parent_obj) if parent_obj.obj_type == @bitcore.ObjectType::Commit => {
+        let parent_info = @bitcore.parse_commit(parent_obj.data)
+        if log_trees_same_for_pathspecs(
+            rfs,
+            db,
+            parent_info.tree,
+            info.tree,
+            pathspecs,
+          ) {
+          return false
+        }
+      }
+      _ => ()
+    }
+  }
+  true
+}
+
+///|
 fn log_commit_matches_history_filters(
   rfs : &@bitcore.RepoFileSystem,
   git_dir : String,
@@ -2238,7 +2778,13 @@ fn log_commit_matches_history_filters(
   exclude : Map[String, Bool],
   detect_renames : Bool,
   detect_copies : Bool,
+  simplify_merges : Bool,
 ) -> Bool raise Error {
+  if !log_commit_matches_simplify_merges(
+      rfs, git_dir, db, commit_id, pathspecs, simplify_merges,
+    ) {
+    return false
+  }
   if !log_commit_matches_pathspecs(rfs, git_dir, db, commit_id, pathspecs) {
     return false
   }
@@ -3191,6 +3737,32 @@ fn shorten_reflog_refname(refname : String) -> String {
 }
 
 ///|
+fn log_format_commit_identity(
+  id : @bitcore.ObjectId,
+  parents : Array[@bitcore.ObjectId],
+  abbrev_len : Int,
+  abbrev_commit : Bool,
+  show_parents : Bool,
+) -> String {
+  let out = StringBuilder::new()
+  let format_hex = fn(hex : String) -> String {
+    if abbrev_commit {
+      log_abbrev_hex(hex, abbrev_len)
+    } else {
+      hex
+    }
+  }
+  out.write_string(format_hex(id.to_hex()))
+  if show_parents {
+    for parent in parents {
+      out.write_string(" ")
+      out.write_string(format_hex(parent.to_hex()))
+    }
+  }
+  out.to_string()
+}
+
+///|
 async fn log_emit_default_commit_entry(
   entry : LogWalkEntry,
   ref_names : Map[String, Array[String]],
@@ -3211,14 +3783,17 @@ async fn log_emit_default_commit_entry(
   reflog_message? : String? = None,
   name_only? : Bool = false,
   name_status? : Bool = false,
+  show_parents? : Bool = false,
 ) -> Unit raise Error {
   let deco = format_decoration(ref_names, entry.id.to_hex())
-  let header_hex = if abbrev_commit {
-    log_abbrev_hex(entry.id.to_hex(), abbrev_len)
-  } else {
-    entry.id.to_hex()
-  }
-  log_emit_output("commit " + header_hex + deco, true, line_prefix)
+  let header_identity = log_format_commit_identity(
+    entry.id,
+    entry.parents,
+    abbrev_len,
+    abbrev_commit,
+    show_parents,
+  )
+  log_emit_output("commit " + header_identity + deco, true, line_prefix)
   match (reflog_selector, reflog_identity, reflog_message) {
     (Some(selector), Some(identity), Some(message)) => {
       log_emit_output(
@@ -3398,6 +3973,9 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
   let mut reverse = false
   let mut first_parent = false
   let mut left_right = false
+  let mut show_boundary = false
+  let mut ancestry_path = false
+  let mut show_signature_override : Bool? = None
   let mut source = false
   let mut stdin_mode = false
   let mut ignore_missing = false
@@ -3408,6 +3986,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
   let mut raw_detect_renames = true
   let mut show_raw = false
   let mut no_merges = false
+  let mut show_parents = false
   let mut abbrev_commit_override : Bool? = None
   let mut abbrev_len_override : Int? = None
   let mut no_abbrev = false
@@ -3425,12 +4004,15 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
   let decoration_exclude_patterns : Array[String] = []
   let mut clear_decorations = false
   let mut simplify_by_decoration = false
+  let mut full_history = false
+  let mut simplify_merges = false
   let diff_filter_include : Map[String, Bool] = {}
   let diff_filter_exclude : Map[String, Bool] = {}
   let branch_patterns : Array[String] = []
   let revs : Array[String] = []
   let range_excludes : Array[String] = []
   let symmetric_ranges : Array[(String, String)] = []
+  let ancestry_path_specs : Array[String] = []
   let pathspecs : Array[String] = []
   let mut saw_revision_input = false
   let mut end_of_options = false
@@ -3461,6 +4043,10 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
       "--end-of-options" => end_of_options = true
       "--source" => source = true
       "--left-right" => left_right = true
+      "--boundary" => show_boundary = true
+      "--ancestry-path" => ancestry_path = true
+      "--show-signature" => show_signature_override = Some(true)
+      "--no-show-signature" => show_signature_override = Some(false)
       "--stdin" => stdin_mode = true
       "--ignore-missing" => ignore_missing = true
       "--exclude-promisor-objects" =>
@@ -3519,6 +4105,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
       "--topo-order" => topo_order = true
       "--date-order" | "--author-date-order" => () // accepted but date-order is default
       "--no-merges" => no_merges = true
+      "--parents" => show_parents = true
       "--abbrev-commit" => abbrev_commit_override = Some(true)
       "--no-abbrev-commit" => abbrev_commit_override = Some(false)
       "--no-abbrev" => no_abbrev = true
@@ -3633,6 +4220,12 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         decoration_include_patterns.push(string_slice_from(arg, 16))
       _ if arg.has_prefix("--decorate-refs-exclude=") =>
         decoration_exclude_patterns.push(string_slice_from(arg, 24))
+      _ if arg.has_prefix("--ancestry-path=") => {
+        ancestry_path = true
+        ancestry_path_specs.push(string_slice_from(arg, 16))
+      }
+      "--full-history" => full_history = true
+      "--simplify-merges" => simplify_merges = true
       _ if arg.has_prefix("-n") && arg.length() > 2 => {
         let num_str = string_slice_from(arg, 2)
         max_count = @string.parse_int(num_str)
@@ -3716,78 +4309,14 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
   }
   if stdin_mode {
     let input = decode_bytes(read_all_stdin())
-    let mut stdin_end_of_options = false
-    let mut stdin_pathspec_mode = false
-    let mut stdin_not_mode = false
-    for line_view in input.split("\n") {
-      let line = trim_string(line_view.to_string())
-      if line.length() == 0 || line.has_prefix("#") {
-        continue
-      }
-      if stdin_pathspec_mode {
-        pathspecs.push(line)
-        continue
-      }
-      if stdin_end_of_options {
-        saw_revision_input = true
-        log_push_revision_input(
-          line, revs, range_excludes, symmetric_ranges, stdin_not_mode,
-        )
-        continue
-      }
-      if line == "--" {
-        stdin_pathspec_mode = true
-        continue
-      }
-      if line == "--end-of-options" {
-        stdin_end_of_options = true
-        continue
-      }
-      if line == "--not" {
-        stdin_not_mode = !stdin_not_mode
-        continue
-      }
-      if line == "--all" {
-        all_refs = true
-        saw_revision_input = true
-        continue
-      }
-      if line == "--branches" {
-        branch_patterns.push("*")
-        saw_revision_input = true
-        continue
-      }
-      if line == "--glob" {
-        raise @bitcore.GitError::InvalidObject(
-          "Option '--glob' requires a value",
-        )
-      }
-      if line.has_prefix("--branches=") {
-        branch_patterns.push(
-          String::unsafe_substring(line, start=11, end=line.length()),
-        )
-        saw_revision_input = true
-        continue
-      }
-      if line.has_prefix("--glob=") {
-        log_append_glob_targets(
-          rfs,
-          git_dir,
-          String::unsafe_substring(line, start=7, end=line.length()),
-          revs,
-        )
-        saw_revision_input = true
-        continue
-      }
-      if line.has_prefix("-") && !line.has_prefix("^") {
-        raise @bitcore.GitError::InvalidObject(
-          "invalid option '" + line + "' in --stdin mode",
-        )
-      }
+    let (stdin_saw_revision_input, stdin_all_refs) = log_parse_stdin_input(
+      rfs, git_dir, input, revs, range_excludes, symmetric_ranges, pathspecs, branch_patterns,
+    )
+    if stdin_saw_revision_input {
       saw_revision_input = true
-      log_push_revision_input(
-        line, revs, range_excludes, symmetric_ranges, stdin_not_mode,
-      )
+    }
+    if stdin_all_refs {
+      all_refs = true
     }
   }
   if graph && no_walk {
@@ -3804,6 +4333,10 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     raise @bitcore.GitError::InvalidObject(
       "options '--graph' and '--walk-reflogs' cannot be used together",
     )
+  }
+  let show_signature = match show_signature_override {
+    Some(value) => value
+    None => log_signature_display_config_enabled(git_dir)
   }
   let grep_pattern_type = resolve_grep_pattern_type(
     rfs, git_dir, grep_pattern_type_override,
@@ -3926,11 +4459,30 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
           date_format,
         )
         if reflog_oneline {
-          let rendered = log_abbrev_hex(entry.new_id.to_hex(), abbrev_len) +
-            " " +
-            gd +
-            ": " +
-            entry.message
+          let identity = if show_parents {
+            match reflog_db.get(rfs, entry.new_id) {
+              Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit => {
+                let info = @bitcore.parse_commit(obj.data)
+                let parents = log_resolve_parents(
+                  rfs,
+                  git_dir,
+                  entry.new_id,
+                  info.parents,
+                )
+                log_format_commit_identity(
+                  entry.new_id,
+                  parents,
+                  abbrev_len,
+                  true,
+                  true,
+                )
+              }
+              _ => log_abbrev_hex(entry.new_id.to_hex(), abbrev_len)
+            }
+          } else {
+            log_abbrev_hex(entry.new_id.to_hex(), abbrev_len)
+          }
+          let rendered = identity + " " + gd + ": " + entry.message
           log_emit_output(rendered, true, line_prefix)
           emitted += 1
           reflog_index += 1
@@ -3964,6 +4516,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
                 reflog_selector=Some(gd),
                 reflog_identity=Some(entry.author + " <" + entry.email + ">"),
                 reflog_message=Some(entry.message),
+                show_parents~,
               )
               if (show_stat || show_patch || show_raw) &&
                 reflog_index + 1 < entries.length() &&
@@ -4023,12 +4576,13 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
   }
   if format is Some(raw_fmt) {
     // Strip tformat:/format: prefix
+    let pretty_oneline = raw_fmt == "oneline"
     let (actual_fmt, is_tformat) = if raw_fmt.has_prefix("tformat:") {
       (string_slice_from(raw_fmt, 8), true)
     } else if raw_fmt.has_prefix("format:") {
       (string_slice_from(raw_fmt, 7), false)
     } else if raw_fmt == "oneline" {
-      ("%h %s", true)
+      ("%H %s", true)
     } else {
       (raw_fmt, true)
     }
@@ -4082,6 +4636,10 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     } else {
       {}
     }
+    let ancestry_roots = log_resolve_ancestry_roots(
+      rfs, git_dir, ancestry_path, ancestry_path_specs, range_excludes, symmetric_ranges,
+      ignore_missing,
+    )
     let seen : Map[String, Bool] = {}
     let formatted_lines : Array[String] = []
     if no_walk {
@@ -4108,6 +4666,16 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         if seen.contains(hex) {
           continue
         }
+        if ancestry_roots.length() > 0 &&
+          !log_commit_has_ancestor(
+            rfs,
+            git_dir,
+            id,
+            ancestry_roots,
+            first_parent~,
+          ) {
+          continue
+        }
         if !log_commit_matches_text_filters(
             rfs, db, id, grep_patterns, grep_pattern_type, grep_ignore_case, invert_grep,
             all_match, author_patterns, committer_patterns,
@@ -4116,7 +4684,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         }
         if !log_commit_matches_history_filters(
             rfs, git_dir, db, id, pathspecs, diff_filter_include, diff_filter_exclude,
-            detect_renames, detect_copies,
+            detect_renames, detect_copies, simplify_merges,
           ) {
           continue
         }
@@ -4150,7 +4718,22 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
           },
           pretty_color_enabled~,
         )
-        formatted_lines.push(format_commit_string(actual_fmt, commit_data))
+        let rendered = if pretty_oneline {
+          log_format_commit_identity(
+            id, parents, abbrev_len, abbrev_commit, show_parents,
+          ) +
+          format_decoration(ref_names_map, id.to_hex()) +
+          " " +
+          commit_data.subject
+        } else {
+          format_commit_string(actual_fmt, commit_data)
+        }
+        if show_signature {
+          log_append_commit_signature_output_lines(
+            formatted_lines, fs, root, git_dir, db, id,
+          )
+        }
+        formatted_lines.push(rendered)
       }
     } else {
       let start_targets = log_resolve_targets(
@@ -4217,13 +4800,28 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         false,
         first_parent~,
         topo_order~,
+        show_boundary~,
       )
       if reverse {
         entries.rev_in_place()
       }
+      let mut emitted = 0
       for entry in entries {
+        if !entry.boundary && emitted >= max_count {
+          break
+        }
         let hex = entry.id.to_hex()
         if seen.contains(hex) {
+          continue
+        }
+        if ancestry_roots.length() > 0 &&
+          !log_commit_has_ancestor(
+            rfs,
+            git_dir,
+            entry.id,
+            ancestry_roots,
+            first_parent~,
+          ) {
           continue
         }
         if !log_commit_matches_text_filters(
@@ -4250,6 +4848,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
             diff_filter_exclude,
             detect_renames,
             detect_copies,
+            simplify_merges,
           ) {
           continue
         }
@@ -4277,15 +4876,38 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
           ref_names_map,
           abbrev_len~,
           date_format~,
-          left_right_marker=match left_right_markers.get(hex) {
-            Some(marker) => marker
-            None => ""
-          },
+          left_right_marker=log_entry_revision_marker(entry, left_right_markers),
           pretty_color_enabled~,
         )
-        formatted_lines.push(format_commit_string(actual_fmt, commit_data))
-        if formatted_lines.length() >= max_count {
-          break
+        let rendered = if pretty_oneline {
+          let marker_prefix = log_entry_marker_prefix(entry, left_right_markers)
+          marker_prefix +
+          log_format_commit_identity(
+            entry.id,
+            parents,
+            abbrev_len,
+            abbrev_commit,
+            show_parents,
+          ) +
+          format_decoration(ref_names_map, entry.id.to_hex()) +
+          " " +
+          commit_data.subject
+        } else {
+          format_commit_string(actual_fmt, commit_data)
+        }
+        if show_signature {
+          log_append_commit_signature_output_lines(
+            formatted_lines,
+            fs,
+            root,
+            git_dir,
+            db,
+            entry.id,
+          )
+        }
+        formatted_lines.push(rendered)
+        if !entry.boundary {
+          emitted += 1
         }
       }
     }
@@ -4325,9 +4947,12 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     decoration_exclude_patterns.length() > 0 ||
     clear_decorations ||
     simplify_by_decoration ||
+    full_history ||
+    simplify_merges ||
     pathspecs.length() > 0 ||
     show_raw ||
     no_merges ||
+    show_parents ||
     abbrev_commit ||
     abbrev_len != 7 ||
     log_has_diff_filter(diff_filter_include, diff_filter_exclude) ||
@@ -4337,6 +4962,10 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     committer_patterns.length() > 0 ||
     saw_revision_input ||
     source ||
+    show_boundary ||
+    show_signature ||
+    ancestry_path ||
+    ancestry_path_specs.length() > 0 ||
     revs.length() > 0 ||
     range_excludes.length() > 0 ||
     branch_patterns.length() > 0 ||
@@ -4344,7 +4973,8 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
   if graph {
     log_with_graph(
       rfs, git_dir, max_count, oneline, all_refs, show_decorations, since_ts, until_ts,
-      revs, range_excludes, first_parent,
+      revs, range_excludes, first_parent, show_parents, abbrev_len, abbrev_commit,
+      show_boundary,
     )
   } else if no_walk {
     let resolved_targets = log_resolve_targets(
@@ -4368,6 +4998,10 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     }
     let ref_names = if show_decorations { selection_ref_names } else { {} }
     let db = @bitlib.ObjectDb::load(rfs, git_dir)
+    let ancestry_roots = log_resolve_ancestry_roots(
+      rfs, git_dir, ancestry_path, ancestry_path_specs, range_excludes, symmetric_ranges,
+      ignore_missing,
+    )
     let seen : Map[String, Bool] = {}
     if oneline {
       let lines : Array[String] = []
@@ -4380,6 +5014,16 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         if seen.contains(hex) {
           continue
         }
+        if ancestry_roots.length() > 0 &&
+          !log_commit_has_ancestor(
+            rfs,
+            git_dir,
+            id,
+            ancestry_roots,
+            first_parent~,
+          ) {
+          continue
+        }
         if !log_commit_matches_text_filters(
             rfs, db, id, grep_patterns, grep_pattern_type, grep_ignore_case, invert_grep,
             all_match, author_patterns, committer_patterns,
@@ -4388,7 +5032,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         }
         if !log_commit_matches_history_filters(
             rfs, git_dir, db, id, pathspecs, diff_filter_include, diff_filter_exclude,
-            detect_renames, detect_copies,
+            detect_renames, detect_copies, simplify_merges,
           ) {
           continue
         }
@@ -4406,12 +5050,18 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
               ) {
               continue
             }
-            let short = log_abbrev_hex(entry.id.to_hex(), abbrev_len)
+            let identity = log_format_commit_identity(
+              entry.id,
+              entry.parents,
+              abbrev_len,
+              true,
+              show_parents,
+            )
             let deco = format_decoration(ref_names, hex)
             let line = if source {
-              short + deco + "\t" + target.0 + " " + entry.message
+              identity + deco + "\t" + target.0 + " " + entry.message
             } else {
-              short + deco + " " + entry.message
+              identity + deco + " " + entry.message
             }
             lines.push(line)
           }
@@ -4428,6 +5078,16 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         if seen.contains(hex) {
           continue
         }
+        if ancestry_roots.length() > 0 &&
+          !log_commit_has_ancestor(
+            rfs,
+            git_dir,
+            id,
+            ancestry_roots,
+            first_parent~,
+          ) {
+          continue
+        }
         if !log_commit_matches_text_filters(
             rfs, db, id, grep_patterns, grep_pattern_type, grep_ignore_case, invert_grep,
             all_match, author_patterns, committer_patterns,
@@ -4436,7 +5096,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
         }
         if !log_commit_matches_history_filters(
             rfs, git_dir, db, id, pathspecs, diff_filter_include, diff_filter_exclude,
-            detect_renames, detect_copies,
+            detect_renames, detect_copies, simplify_merges,
           ) {
           continue
         }
@@ -4462,12 +5122,28 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
               continue
             }
             let deco = format_decoration(ref_names, hex)
-            let header_hex = if abbrev_commit {
-              log_abbrev_hex(entry.id.to_hex(), abbrev_len)
-            } else {
-              entry.id.to_hex()
+            let header_identity = log_format_commit_identity(
+              entry.id,
+              entry.parents,
+              abbrev_len,
+              abbrev_commit,
+              show_parents,
+            )
+            log_emit_output(
+              "commit " + header_identity + deco,
+              true,
+              line_prefix,
+            )
+            if show_signature {
+              log_emit_commit_signature_output_lines(
+                fs,
+                root,
+                git_dir,
+                db,
+                entry.id,
+                line_prefix,
+              )
             }
-            log_emit_output("commit " + header_hex + deco, true, line_prefix)
             log_emit_output("Author: " + entry.author, true, line_prefix)
             let date_str = format_date_by_mode(
               entry.timestamp,
@@ -4627,6 +5303,10 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     } else {
       {}
     }
+    let ancestry_roots = log_resolve_ancestry_roots(
+      rfs, git_dir, ancestry_path, ancestry_path_specs, range_excludes, symmetric_ranges,
+      ignore_missing,
+    )
     let entries = log_walk_commits(
       rfs,
       git_dir,
@@ -4642,6 +5322,7 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
       show_stat || show_patch || show_raw || name_only || name_status,
       first_parent~,
       topo_order~,
+      show_boundary~,
     )
     if reverse {
       entries.rev_in_place()
@@ -4649,8 +5330,18 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
     if oneline {
       let mut emitted = 0
       for entry in entries {
-        if emitted >= max_count {
+        if !entry.boundary && emitted >= max_count {
           break
+        }
+        if ancestry_roots.length() > 0 &&
+          !log_commit_has_ancestor(
+            rfs,
+            git_dir,
+            entry.id,
+            ancestry_roots,
+            first_parent~,
+          ) {
+          continue
         }
         if no_merges && entry.parent_count > 1 {
           continue
@@ -4687,32 +5378,54 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
             diff_filter_exclude,
             detect_renames,
             detect_copies,
+            simplify_merges,
           ) {
           continue
         }
-        let short = log_abbrev_hex(entry.id.to_hex(), abbrev_len)
+        let identity = log_format_commit_identity(
+          entry.id,
+          entry.parents,
+          abbrev_len,
+          true,
+          show_parents,
+        )
         let deco = format_decoration(ref_names, entry.id.to_hex())
-        let marker_prefix = match left_right_markers.get(entry.id.to_hex()) {
-          Some(marker) => marker + " "
-          None => ""
-        }
+        let marker_prefix = log_entry_marker_prefix(entry, left_right_markers)
         let line = if source {
           match source_names.get(entry.id.to_hex()) {
             Some(name) =>
-              marker_prefix + short + deco + "\t" + name + " " + entry.message
-            None => marker_prefix + short + deco + " " + entry.message
+              marker_prefix +
+              identity +
+              deco +
+              "\t" +
+              name +
+              " " +
+              entry.message
+            None => marker_prefix + identity + deco + " " + entry.message
           }
         } else {
-          marker_prefix + short + deco + " " + entry.message
+          marker_prefix + identity + deco + " " + entry.message
         }
         log_emit_output(line, true, line_prefix)
-        emitted += 1
+        if !entry.boundary {
+          emitted += 1
+        }
       }
     } else {
       let mut emitted = 0
       for entry in entries {
-        if emitted >= max_count {
+        if !entry.boundary && emitted >= max_count {
           break
+        }
+        if ancestry_roots.length() > 0 &&
+          !log_commit_has_ancestor(
+            rfs,
+            git_dir,
+            entry.id,
+            ancestry_roots,
+            first_parent~,
+          ) {
+          continue
         }
         if no_merges && entry.parent_count > 1 {
           continue
@@ -4749,24 +5462,34 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
             diff_filter_exclude,
             detect_renames,
             detect_copies,
+            simplify_merges,
           ) {
           continue
         }
         let deco = format_decoration(ref_names, entry.id.to_hex())
-        let header_hex = if abbrev_commit {
-          log_abbrev_hex(entry.id.to_hex(), abbrev_len)
-        } else {
-          entry.id.to_hex()
-        }
-        let marker_prefix = match left_right_markers.get(entry.id.to_hex()) {
-          Some(marker) => marker + " "
-          None => ""
-        }
+        let header_identity = log_format_commit_identity(
+          entry.id,
+          entry.parents,
+          abbrev_len,
+          abbrev_commit,
+          show_parents,
+        )
+        let marker_prefix = log_entry_marker_prefix(entry, left_right_markers)
         log_emit_output(
-          "commit " + marker_prefix + header_hex + deco,
+          "commit " + marker_prefix + header_identity + deco,
           true,
           line_prefix,
         )
+        if show_signature {
+          log_emit_commit_signature_output_lines(
+            fs,
+            root,
+            git_dir,
+            walk_db,
+            entry.id,
+            line_prefix,
+          )
+        }
         log_emit_output("Author: " + entry.author, true, line_prefix)
         let date_str = format_date_by_mode(
           entry.timestamp,
@@ -4840,7 +5563,9 @@ async fn handle_log(args : Array[String]) -> Unit raise Error {
           }
           log_emit_output("", true, line_prefix)
         }
-        emitted += 1
+        if !entry.boundary {
+          emitted += 1
+        }
       }
     }
   } else if oneline {
@@ -4979,7 +5704,9 @@ struct LogWalkEntry {
   timestamp : Int64
   tree : @bitcore.ObjectId
   parent_tree : @bitcore.ObjectId?
+  parents : Array[@bitcore.ObjectId]
   parent_count : Int
+  boundary : Bool
 }
 
 ///|
@@ -4990,6 +5717,31 @@ fn format_decoration(
   match ref_names.get(hex) {
     Some(names) if names.length() > 0 => " (" + names.join(", ") + ")"
     _ => ""
+  }
+}
+
+///|
+fn log_entry_revision_marker(
+  entry : LogWalkEntry,
+  left_right_markers : Map[String, String],
+) -> String {
+  if entry.boundary {
+    "-"
+  } else {
+    left_right_markers.get(entry.id.to_hex()).unwrap_or("")
+  }
+}
+
+///|
+fn log_entry_marker_prefix(
+  entry : LogWalkEntry,
+  left_right_markers : Map[String, String],
+) -> String {
+  let marker = log_entry_revision_marker(entry, left_right_markers)
+  if marker.length() > 0 {
+    marker + " "
+  } else {
+    ""
   }
 }
 
@@ -5007,10 +5759,13 @@ fn log_walk_commits(
   include_parent_tree : Bool,
   first_parent? : Bool = false,
   topo_order? : Bool = false,
+  show_boundary? : Bool = false,
 ) -> Array[LogWalkEntry] raise Error {
   let db = @bitlib.ObjectDb::load(rfs, log_resolve_common_git_dir(rfs, git_dir))
   let result : Array[LogWalkEntry] = []
   let visited : Map[String, Bool] = {}
+  let boundary_seen : Map[String, Bool] = {}
+  let boundary_ids : Array[@bitcore.ObjectId] = []
   // Priority queue: (timestamp, id) sorted desc by timestamp
   // Use insertion-sorted array
   let queue : Array[(Int64, @bitcore.ObjectId)] = []
@@ -5066,7 +5821,14 @@ fn log_walk_commits(
       // In topo-order: push first parent onto DFS stack, rest into timestamp queue
       for idx, parent in parents_to_walk {
         let phex = parent.to_hex()
-        if !visited.contains(phex) && !exclude_ids.contains(phex) {
+        if exclude_ids.contains(phex) {
+          if show_boundary && !boundary_seen.contains(phex) {
+            boundary_seen[phex] = true
+            boundary_ids.push(parent)
+          }
+          continue
+        }
+        if !visited.contains(phex) {
           visited[phex] = true
           if idx == 0 {
             topo_stack.push(parent)
@@ -5079,7 +5841,14 @@ fn log_walk_commits(
     } else {
       for parent in parents_to_walk {
         let phex = parent.to_hex()
-        if !visited.contains(phex) && !exclude_ids.contains(phex) {
+        if exclude_ids.contains(phex) {
+          if show_boundary && !boundary_seen.contains(phex) {
+            boundary_seen[phex] = true
+            boundary_ids.push(parent)
+          }
+          continue
+        }
+        if !visited.contains(phex) {
           visited[phex] = true
           let pts = log_get_commit_timestamp(db, rfs, parent)
           log_queue_insert(queue, (pts, parent))
@@ -5087,12 +5856,7 @@ fn log_walk_commits(
       }
     }
     // Build LogWalkEntry
-    let entry = log_parse_entry_from_obj(
-      id,
-      o.data,
-      info.tree,
-      parents.length(),
-    )
+    let entry = log_parse_entry_from_obj(id, o.data, info.tree, parents)
     // Apply since/until filters using parsed timestamp
     if entry.timestamp > until_ts {
       continue // newer than until, skip but keep walking
@@ -5114,6 +5878,37 @@ fn log_walk_commits(
     }
     result.push({ ..entry, parent_tree, })
     emitted += 1
+  }
+  if show_boundary {
+    for boundary_id in boundary_ids {
+      let obj = db.get(rfs, boundary_id)
+      guard obj is Some(o) else { continue }
+      if o.obj_type != @bitcore.ObjectType::Commit {
+        continue
+      }
+      let info = @bitcore.parse_commit(o.data)
+      let parents = log_resolve_parents(rfs, git_dir, boundary_id, info.parents)
+      let entry = log_parse_entry_from_obj(
+        boundary_id,
+        o.data,
+        info.tree,
+        parents,
+        boundary=true,
+      )
+      let parent_tree : @bitcore.ObjectId? = if include_parent_tree &&
+        parents.length() > 0 {
+        match db.get(rfs, parents[0]) {
+          Some(po) => {
+            let pi = @bitcore.parse_commit(po.data)
+            Some(pi.tree)
+          }
+          None => None
+        }
+      } else {
+        None
+      }
+      result.push({ ..entry, parent_tree, })
+    }
   }
   result
 }
@@ -5206,7 +6001,8 @@ fn log_parse_entry_from_obj(
   id : @bitcore.ObjectId,
   data : Bytes,
   tree : @bitcore.ObjectId,
-  parent_count : Int,
+  parents : Array[@bitcore.ObjectId],
+  boundary? : Bool = false,
 ) -> LogWalkEntry {
   let text = decode_bytes(data)
   let mut author = ""
@@ -5231,7 +6027,17 @@ fn log_parse_entry_from_obj(
     }
   }
   let message = if message_lines.length() > 0 { message_lines[0] } else { "" }
-  { id, message, author, timestamp, tree, parent_tree: None, parent_count }
+  {
+    id,
+    message,
+    author,
+    timestamp,
+    tree,
+    parent_tree: None,
+    parents,
+    parent_count: parents.length(),
+    boundary,
+  }
 }
 
 ///|
@@ -5246,7 +6052,7 @@ fn log_load_entry(
   guard obj is Some(o) else { return None }
   let info = @bitcore.parse_commit(o.data)
   let parents = log_resolve_parents(rfs, git_dir, id, info.parents)
-  let entry = log_parse_entry_from_obj(id, o.data, info.tree, parents.length())
+  let entry = log_parse_entry_from_obj(id, o.data, info.tree, parents)
   let parent_tree : @bitcore.ObjectId? = if include_parent_tree &&
     parents.length() > 0 {
     match db.get(rfs, parents[0]) {
@@ -5275,6 +6081,10 @@ async fn log_with_graph(
   revs : Array[String],
   range_excludes : Array[String],
   first_parent : Bool,
+  show_parents : Bool,
+  abbrev_len : Int,
+  abbrev_commit : Bool,
+  show_boundary : Bool,
 ) -> Unit raise Error {
   let db = @bitlib.ObjectDb::load(rfs, git_dir)
   // Collect starting points
@@ -5353,8 +6163,10 @@ async fn log_with_graph(
     }
   }
   // BFS to collect commits with graph structure
-  let commits : Array[(@bitcore.ObjectId, Array[@bitcore.ObjectId], Int)] = [] // (id, parents, column)
+  let commits : Array[(@bitcore.ObjectId, Array[@bitcore.ObjectId], Int, Bool)] = [] // (id, parents, column, boundary)
   let visited : Map[String, Bool] = {}
+  let boundary_seen : Map[String, Bool] = {}
+  let boundary_items : Array[(@bitcore.ObjectId, Int)] = []
   let active_columns : Array[@bitcore.ObjectId?] = [] // Track which columns are active
   let queue : Array[(@bitcore.ObjectId, Int)] = [] // (commit, column)
   // Initialize queue
@@ -5393,18 +6205,27 @@ async fn log_with_graph(
     match obj {
       Some(o) => {
         let info = @bitcore.parse_commit(o.data)
+        let parents = log_resolve_parents(rfs, git_dir, current, info.parents)
         // Add parents to queue (limited to first parent if --first-parent)
         let parents_to_walk : Array[@bitcore.ObjectId] = if first_parent &&
-          info.parents.length() > 0 {
-          [info.parents[0]]
+          parents.length() > 0 {
+          [parents[0]]
         } else {
-          info.parents
+          parents
         }
         for i, parent in parents_to_walk {
           let parent_col = if i == 0 {
             col
           } else {
             find_free_column(active_columns, col)
+          }
+          let parent_hex = parent.to_hex()
+          if exclude_ids.contains(parent_hex) {
+            if show_boundary && !boundary_seen.contains(parent_hex) {
+              boundary_seen[parent_hex] = true
+              boundary_items.push((parent, parent_col))
+            }
+            continue
           }
           queue.push((parent, parent_col))
           if parent_col < active_columns.length() {
@@ -5418,37 +6239,62 @@ async fn log_with_graph(
         // Apply since/until filters
         let ts = log_extract_author_timestamp(o.data)
         if ts <= until_ts && ts >= since_ts {
-          commits.push((current, info.parents, col))
+          commits.push((current, parents, col, false))
           count += 1
         }
       }
       None => ()
     }
   }
+  if show_boundary {
+    for item in boundary_items {
+      let (boundary_id, col) = item
+      let obj = db.get(rfs, boundary_id)
+      match obj {
+        Some(o) if o.obj_type == @bitcore.ObjectType::Commit => {
+          let info = @bitcore.parse_commit(o.data)
+          let parents = log_resolve_parents(
+            rfs,
+            git_dir,
+            boundary_id,
+            info.parents,
+          )
+          commits.push((boundary_id, parents, col, true))
+        }
+        _ => ()
+      }
+    }
+  }
   // Output with graph
   let max_col = get_max_column(commits)
   for entry in commits {
-    let (commit_id, parents, col) = entry
+    let (commit_id, parents, col, is_boundary) = entry
     let hex = commit_id.to_hex()
-    let short_hex = String::unsafe_substring(hex, start=0, end=7)
     // Build graph line
     let graph_line = build_graph_line(col, max_col, parents.length() > 1)
+    let node = if is_boundary { "o " } else { "* " }
     // Get decorations
     let decorations = match ref_names.get(hex) {
       Some(names) => " (" + names.join(", ") + ")"
       None => ""
     }
     if oneline {
+      let identity = log_format_commit_identity(
+        commit_id, parents, abbrev_len, true, show_parents,
+      )
       print_line(
         graph_line +
-        "* " +
-        short_hex +
+        node +
+        identity +
         decorations +
         " " +
         get_commit_subject(db, rfs, commit_id),
       )
     } else {
-      print_line(graph_line + "* commit " + hex + decorations)
+      let identity = log_format_commit_identity(
+        commit_id, parents, abbrev_len, abbrev_commit, show_parents,
+      )
+      print_line(graph_line + node + "commit " + identity + decorations)
       let obj = db.get(rfs, commit_id)
       match obj {
         Some(o) => {
@@ -5477,7 +6323,7 @@ fn find_free_column(columns : Array[@bitcore.ObjectId?], start : Int) -> Int {
 
 ///|
 fn get_max_column(
-  commits : Array[(@bitcore.ObjectId, Array[@bitcore.ObjectId], Int)],
+  commits : Array[(@bitcore.ObjectId, Array[@bitcore.ObjectId], Int, Bool)],
 ) -> Int {
   let mut max = 0
   for entry in commits {

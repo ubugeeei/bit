@@ -22,10 +22,10 @@ test "rev-list: negative max-count is treated as unlimited" {
 }
 
 ///|
-test "rev-list: cherry options require real git fallback" {
-  assert_true(rev_list_requires_real_git(["--cherry-pick", "A...B"]))
-  assert_true(rev_list_requires_real_git(["--cherry-mark", "A...B"]))
-  assert_true(rev_list_requires_real_git(["--cherry", "A...B"]))
+test "rev-list: cherry options stay on native implementation" {
+  assert_false(rev_list_requires_real_git(["--cherry-pick", "A...B"]))
+  assert_false(rev_list_requires_real_git(["--cherry-mark", "A...B"]))
+  assert_false(rev_list_requires_real_git(["--cherry", "A...B"]))
   assert_false(rev_list_requires_real_git(["--left-right", "A...B"]))
 }
 
@@ -68,6 +68,42 @@ async fn rev_list_test_git_stdout(
   stdout.text() catch {
     _ => ""
   }
+}
+
+///|
+async fn rev_list_test_bit_stdout(
+  root : String,
+  args : Array[String],
+) -> String raise Error {
+  let repo_root = @env.current_dir().unwrap_or(".")
+  let bit_exe = repo_root + "/_build/native/release/build/cmd/bit/bit.exe"
+  let bit_args : Array[String] = ["-C", root]
+  for arg in args {
+    bit_args.push(arg)
+  }
+  let (code, stdout, _) = @process.collect_output(
+    bit_exe,
+    bit_args[:],
+    inherit_env=true,
+    cwd=repo_root,
+  )
+  assert_eq(code, 0)
+  stdout.text() catch {
+    _ => ""
+  }
+}
+
+///|
+fn rev_list_sorted_nonempty_lines(s : String) -> String {
+  let lines : Array[String] = []
+  for line_view in s.split("\n") {
+    let line = line_view.to_string()
+    if line.length() > 0 {
+      lines.push(line)
+    }
+  }
+  lines.sort_by(fn(a, b) { String::compare(a, b) })
+  lines.join("\n")
 }
 
 ///|
@@ -138,6 +174,55 @@ fn rev_list_trim_trailing_newline(s : String) -> String {
   } else {
     s
   }
+}
+
+///|
+async test "rev-list: cherry pick and mark match real git on symmetric ranges" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-rev-list-cherry-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  rev_list_test_init_repo(root, repo_dir)
+  fs.write_string(repo_dir + "/file.txt", "base\n")
+  rev_list_test_run_git(repo_dir, ["add", "file.txt"])
+  rev_list_test_run_git(repo_dir, ["commit", "-qm", "base"])
+  rev_list_test_run_git(repo_dir, ["branch", "left"])
+  rev_list_test_run_git(repo_dir, ["branch", "right"])
+
+  rev_list_test_run_git(repo_dir, ["checkout", "-q", "left"])
+  fs.write_string(repo_dir + "/file.txt", "base\nsame\n")
+  rev_list_test_run_git(repo_dir, ["commit", "-am", "left same", "-q"])
+  fs.write_string(repo_dir + "/left.txt", "left\n")
+  rev_list_test_run_git(repo_dir, ["add", "left.txt"])
+  rev_list_test_run_git(repo_dir, ["commit", "-qm", "left unique"])
+
+  rev_list_test_run_git(repo_dir, ["checkout", "-q", "right"])
+  fs.write_string(repo_dir + "/file.txt", "base\nsame\n")
+  rev_list_test_run_git(repo_dir, ["commit", "-am", "right same", "-q"])
+  fs.write_string(repo_dir + "/right.txt", "right\n")
+  rev_list_test_run_git(repo_dir, ["add", "right.txt"])
+  rev_list_test_run_git(repo_dir, ["commit", "-qm", "right unique"])
+
+  for
+    args in [
+      ["rev-list", "--left-right", "--cherry-pick", "left...right"],
+      ["rev-list", "--left-right", "--cherry-mark", "left...right"],
+      ["rev-list", "--cherry", "left...right"],
+    ] {
+    let expected = rev_list_sorted_nonempty_lines(
+      rev_list_test_git_stdout(repo_dir, args),
+    )
+    let actual = rev_list_sorted_nonempty_lines(
+      rev_list_test_bit_stdout(repo_dir, args),
+    )
+    assert_eq(actual, expected)
+  }
+
+  cleanup_tree(fs, root)
 }
 
 ///|

@@ -23,11 +23,7 @@ async fn delegate_rev_list_to_real_git(
 
 ///|
 fn rev_list_requires_real_git(args : Array[String]) -> Bool {
-  for arg in args {
-    if arg == "--cherry-pick" || arg == "--cherry-mark" || arg == "--cherry" {
-      return true
-    }
-  }
+  ignore(args)
   false
 }
 
@@ -112,12 +108,17 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
   let mut use_nul = false
   let mut boundary = false
   let mut left_right = false
+  let mut left_only = false
+  let mut right_only = false
+  let mut cherry_pick = false
+  let mut cherry_mark = false
   let mut max_parents : Int? = None
   let mut min_parents : Int? = None
   let mut graph = false
   let mut no_walk = false
   let refs : Array[String] = []
   let excludes : Array[String] = []
+  let symmetric_ranges : Array[(String, String)] = []
   let rev_list_exclude_patterns : Array[String] = []
   let mut had_ref_source = false
   let mut i = 0
@@ -143,6 +144,15 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
       "-z" => use_nul = true
       "--boundary" => boundary = true
       "--left-right" => left_right = true
+      "--left-only" => left_only = true
+      "--right-only" => right_only = true
+      "--cherry-pick" => cherry_pick = true
+      "--cherry-mark" => cherry_mark = true
+      "--cherry" => {
+        cherry_mark = true
+        right_only = true
+        max_parents = Some(1)
+      }
       "--no-walk" | "--no-walk=sorted" | "--no-walk=unsorted" => no_walk = true
       "--do-walk" => no_walk = false
       "--merges" => min_parents = Some(2)
@@ -352,6 +362,7 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
               // A...B = A B ^merge-base(A,B)
               refs.push(left_ref)
               refs.push(right_ref)
+              symmetric_ranges.push((left_ref, right_ref))
               // merge-base exclusion will be computed after resolution
             } else {
               // A..B = ^A B
@@ -580,6 +591,35 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
     }
   }
   let db = @bitlib.ObjectDb::load(fs, git_dir)
+  for pair in symmetric_ranges {
+    match
+      (
+        @bitrepo.rev_parse(fs, git_dir, pair.0),
+        @bitrepo.rev_parse(fs, git_dir, pair.1),
+      ) {
+      (Some(left_id), Some(right_id)) => {
+        let left_commit = rev_list_peel_to_commit(db, fs, left_id).unwrap_or(
+          left_id,
+        )
+        let right_commit = rev_list_peel_to_commit(db, fs, right_id).unwrap_or(
+          right_id,
+        )
+        let bases = @bitlib.merge_base_all(db, fs, left_commit, right_commit)
+        for base in bases {
+          walk_commits_to_map(fs, git_dir, base, exclude_ids)
+        }
+      }
+      _ => ()
+    }
+  }
+  let left_right_markers = if (
+      left_right || left_only || right_only || cherry_pick || cherry_mark
+    ) &&
+    symmetric_ranges.length() > 0 {
+    rev_list_build_left_right_markers(fs, git_dir, db, symmetric_ranges)
+  } else {
+    {}
+  }
   let visited : Map[String, Bool] = {}
   let result : Array[@bitcore.ObjectId] = []
   // BFS/DFS traversal — collect ALL reachable commits, then sort/slice
@@ -643,6 +683,37 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
         None => true
       }
       if min_ok && max_ok {
+        filtered.push(id)
+      }
+    }
+    result.clear()
+    for id in filtered {
+      result.push(id)
+    }
+  }
+  let cherry_equal = if cherry_pick || cherry_mark {
+    rev_list_build_cherry_equal(db, fs, git_dir, result, left_right_markers)
+  } else {
+    {}
+  }
+  if left_only || right_only || cherry_pick {
+    let filtered : Array[@bitcore.ObjectId] = []
+    for id in result {
+      let hex = id.to_hex()
+      let marker = left_right_markers.get(hex).unwrap_or("")
+      let side_ok = if symmetric_ranges.length() == 0 {
+        true
+      } else if left_only && right_only {
+        false
+      } else if left_only {
+        marker == "<"
+      } else if right_only {
+        marker == ">"
+      } else {
+        true
+      }
+      let cherry_ok = !(cherry_pick && cherry_equal.contains(hex))
+      if side_ok && cherry_ok {
         filtered.push(id)
       }
     }
@@ -732,7 +803,6 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
   if quiet {
     return
   }
-  ignore(left_right)
   // Output commits
   match format {
     Some(raw_fmt) => {
@@ -759,8 +829,18 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
       let ref_names : Map[String, Array[String]] = {}
       let output_encoding = rev_list_resolve_output_encoding(git_dir)
       for idx, id in sliced_result {
+        let prefix = rev_list_output_prefix(
+          id.to_hex(),
+          left_right,
+          cherry_mark,
+          cherry_equal,
+          left_right_markers,
+        )
         // Print commit header line
-        rev_list_write_text("commit " + id.to_hex() + "\n", output_encoding)
+        rev_list_write_text(
+          "commit " + prefix + id.to_hex() + "\n",
+          output_encoding,
+        )
         // Read commit data and format
         match db.get(fs, id) {
           Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit => {
@@ -788,7 +868,13 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
     None =>
       for id in sliced_result {
         let buf = StringBuilder::new()
-        buf.write_string(id.to_hex())
+        let hex = id.to_hex()
+        buf.write_string(
+          rev_list_output_prefix(
+            hex, left_right, cherry_mark, cherry_equal, left_right_markers,
+          ),
+        )
+        buf.write_string(hex)
         if parents {
           match db.get(fs, id) {
             Some(obj) if obj.obj_type == @bitcore.ObjectType::Commit => {
@@ -844,6 +930,227 @@ async fn handle_rev_list(args : Array[String]) -> Unit raise Error {
     }
   }
   ignore(boundary)
+}
+
+///|
+fn rev_list_peel_to_commit(
+  db : @bitlib.ObjectDb,
+  fs : OsFs,
+  id : @bitcore.ObjectId,
+) -> @bitcore.ObjectId? {
+  let mut current = id
+  for _ in 0..<5 {
+    let obj = db.get(fs, current) catch { _ => return None }
+    guard obj is Some(o) else { return None }
+    match o.obj_type {
+      @bitcore.ObjectType::Commit => return Some(current)
+      @bitcore.ObjectType::Tag =>
+        match parse_tag_target(o.data) {
+          Some(next) => current = next
+          None => return None
+        }
+      _ => return None
+    }
+  }
+  None
+}
+
+///|
+fn rev_list_assign_left_right_marker(
+  markers : Map[String, String],
+  hex : String,
+  marker : String,
+) -> Unit {
+  match markers.get(hex) {
+    Some(existing) if existing == marker => ()
+    Some(_) => markers[hex] = "-"
+    None => markers[hex] = marker
+  }
+}
+
+///|
+fn rev_list_build_left_right_markers(
+  fs : OsFs,
+  git_dir : String,
+  db : @bitlib.ObjectDb,
+  symmetric_ranges : Array[(String, String)],
+) -> Map[String, String] raise Error {
+  let markers : Map[String, String] = {}
+  for pair in symmetric_ranges {
+    match
+      (
+        @bitrepo.rev_parse(fs, git_dir, pair.0),
+        @bitrepo.rev_parse(fs, git_dir, pair.1),
+      ) {
+      (Some(left_id), Some(right_id)) => {
+        let left_commit = rev_list_peel_to_commit(db, fs, left_id).unwrap_or(
+          left_id,
+        )
+        let right_commit = rev_list_peel_to_commit(db, fs, right_id).unwrap_or(
+          right_id,
+        )
+        let left_seen : Map[String, Bool] = {}
+        let right_seen : Map[String, Bool] = {}
+        let merge_base_seen : Map[String, Bool] = {}
+        walk_commits_to_map(fs, git_dir, left_commit, left_seen)
+        walk_commits_to_map(fs, git_dir, right_commit, right_seen)
+        let bases = @bitlib.merge_base_all(db, fs, left_commit, right_commit)
+        for base in bases {
+          walk_commits_to_map(fs, git_dir, base, merge_base_seen)
+        }
+        for item in left_seen.to_array() {
+          let hex = item.0
+          if merge_base_seen.contains(hex) {
+            continue
+          }
+          rev_list_assign_left_right_marker(
+            markers,
+            hex,
+            if right_seen.contains(hex) {
+              "-"
+            } else {
+              "<"
+            },
+          )
+        }
+        for item in right_seen.to_array() {
+          let hex = item.0
+          if merge_base_seen.contains(hex) {
+            continue
+          }
+          rev_list_assign_left_right_marker(
+            markers,
+            hex,
+            if left_seen.contains(hex) {
+              "-"
+            } else {
+              ">"
+            },
+          )
+        }
+      }
+      _ => ()
+    }
+  }
+  markers
+}
+
+///|
+fn rev_list_commit_patch_id(
+  db : @bitlib.ObjectDb,
+  fs : OsFs,
+  git_dir : String,
+  commit_id : @bitcore.ObjectId,
+) -> String? {
+  let obj = db.get(fs, commit_id) catch { _ => return None }
+  guard obj is Some(o) else { return None }
+  if o.obj_type != @bitcore.ObjectType::Commit {
+    return None
+  }
+  let info = @bitcore.parse_commit(o.data) catch { _ => return None }
+  let old_tree : @bitcore.ObjectId? = if info.parents.length() > 0 {
+    let parent_obj_opt = db.get(fs, info.parents[0]) catch { _ => None }
+    match parent_obj_opt {
+      Some(parent_obj) if parent_obj.obj_type == @bitcore.ObjectType::Commit => {
+        let parent_info = @bitcore.parse_commit(parent_obj.data) catch {
+          _ => return None
+        }
+        Some(parent_info.tree)
+      }
+      _ => None
+    }
+  } else {
+    None
+  }
+  let diff_files = @bitdiff.diff_trees(fs, git_dir, old_tree, info.tree, db~) catch {
+    _ => return None
+  }
+  if diff_files.length() == 0 {
+    return None
+  }
+  let patch = @bitdiff.diff_text(diff_files).join("\n")
+  let ids = patch_id_compute(patch)
+  if ids.length() == 0 {
+    None
+  } else {
+    Some(ids[0].0)
+  }
+}
+
+///|
+fn rev_list_push_patch_bucket(
+  buckets : Map[String, Array[String]],
+  key : String,
+  hex : String,
+) -> Unit {
+  match buckets.get(key) {
+    Some(list) => list.push(hex)
+    None => buckets[key] = [hex]
+  }
+}
+
+///|
+fn rev_list_build_cherry_equal(
+  db : @bitlib.ObjectDb,
+  fs : OsFs,
+  git_dir : String,
+  commits : Array[@bitcore.ObjectId],
+  left_right_markers : Map[String, String],
+) -> Map[String, Bool] {
+  let left_patches : Map[String, Array[String]] = {}
+  let right_patches : Map[String, Array[String]] = {}
+  for id in commits {
+    let hex = id.to_hex()
+    let side = left_right_markers.get(hex).unwrap_or("")
+    if side != "<" && side != ">" {
+      continue
+    }
+    match rev_list_commit_patch_id(db, fs, git_dir, id) {
+      Some(pid) =>
+        if side == "<" {
+          rev_list_push_patch_bucket(left_patches, pid, hex)
+        } else {
+          rev_list_push_patch_bucket(right_patches, pid, hex)
+        }
+      None => ()
+    }
+  }
+  let equal : Map[String, Bool] = {}
+  for item in left_patches.to_array() {
+    let pid = item.0
+    let left_ids = item.1
+    match right_patches.get(pid) {
+      Some(right_ids) => {
+        for hex in left_ids {
+          equal[hex] = true
+        }
+        for hex in right_ids {
+          equal[hex] = true
+        }
+      }
+      None => ()
+    }
+  }
+  equal
+}
+
+///|
+fn rev_list_output_prefix(
+  hex : String,
+  left_right : Bool,
+  cherry_mark : Bool,
+  cherry_equal : Map[String, Bool],
+  left_right_markers : Map[String, String],
+) -> String {
+  if cherry_mark && cherry_equal.contains(hex) {
+    "="
+  } else if left_right {
+    left_right_markers.get(hex).unwrap_or("")
+  } else if cherry_mark {
+    "+"
+  } else {
+    ""
+  }
 }
 
 ///|

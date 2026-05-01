@@ -176,3 +176,61 @@ test "fetch relay: falls back to repo and then first peer" {
   )
   assert_eq(first, Some(("node-a", "http://node-a:9418/repo-a.git")))
 }
+
+///|
+async test "fetch: depth and unshallow update shallow metadata natively" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-fetch-depth-" + get_current_timestamp().to_string()
+  let src = root + "/src"
+  let dst = root + "/dst"
+  cleanup_tree(fs, root)
+  fs.mkdir_p(src)
+  fs.mkdir_p(dst)
+  commit_wbtest_run_git(src, ["init", "--initial-branch=main", "-q"])
+  commit_wbtest_run_git(src, ["config", "user.name", "Test User"])
+  commit_wbtest_run_git(src, ["config", "user.email", "test@example.com"])
+  fs.write_string(src + "/file.txt", "one\n")
+  commit_wbtest_run_git(src, ["add", "file.txt"])
+  commit_wbtest_run_git(src, ["commit", "-q", "-m", "one"])
+  fs.write_string(src + "/file.txt", "two\n")
+  commit_wbtest_run_git(src, ["commit", "-q", "-am", "two"])
+  commit_wbtest_run_git(dst, ["init", "--initial-branch=main", "-q"])
+  let remote_url = "file://" + src
+  let git_dir = dst + "/.git"
+  fetch_from_remote(
+    fs,
+    git_dir,
+    dst,
+    "origin",
+    remote_url,
+    [],
+    force_transport=true,
+    depth=1,
+    quiet=true,
+  )
+  assert_true(fs.is_file(git_dir + "/shallow"))
+  let shallow = decode_bytes(fs.read_file(git_dir + "/shallow"))
+  assert_true(shallow.length() > 0)
+  fetch_from_remote(
+    fs,
+    git_dir,
+    dst,
+    "origin",
+    remote_url,
+    [],
+    force_transport=true,
+    unshallow=true,
+    quiet=true,
+  )
+  assert_false(fs.is_file(git_dir + "/shallow"))
+  assert_eq(
+    trim_string(
+      add_test_git_stdout(dst, [
+        "rev-list", "--count", "refs/remotes/origin/main",
+      ]),
+    ),
+    "2",
+  )
+  cleanup_tree(fs, root)
+}

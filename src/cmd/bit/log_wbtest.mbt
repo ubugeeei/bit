@@ -106,18 +106,48 @@ test "log: revision input handles caret and not-mode excludes" {
 }
 
 ///|
-test "log: ancestry and simplify options fall back to real git" {
-  assert_true(log_need_real_git(["--stdin"]))
-  assert_true(log_need_real_git(["--boundary"]))
-  assert_true(log_need_real_git(["--ancestry-path"]))
-  assert_true(log_need_real_git(["--ancestry-path=topic"]))
+test "log: stdin parser reads revisions, excludes, and pathspecs" {
+  let fs = @bitcore.TestFs::new()
+  ignore(try? @bitlib.init_repo(fs, "/repo"))
+  let revs : Array[String] = []
+  let excludes : Array[String] = []
+  let symmetric : Array[(String, String)] = []
+  let pathspecs : Array[String] = []
+  let branch_patterns : Array[String] = []
+
+  let (saw_revision_input, all_refs) = log_parse_stdin_input(
+    fs, "/repo/.git", "HEAD\n^HEAD~1\n--\nfile-2\n", revs, excludes, symmetric, pathspecs,
+    branch_patterns,
+  )
+
+  assert_true(saw_revision_input)
+  assert_false(all_refs)
+  assert_eq(revs, ["HEAD"])
+  assert_eq(excludes, ["HEAD~1"])
+  assert_eq(symmetric.length(), 0)
+  assert_eq(pathspecs, ["file-2"])
+  assert_eq(branch_patterns.length(), 0)
+}
+
+///|
+test "log: ancestry and remaining simplify options fallback boundaries" {
+  assert_false(log_need_real_git(["--stdin"]))
+  assert_false(log_need_real_git(["--boundary"]))
+  assert_false(log_need_real_git(["--ancestry-path", "A..B"]))
+  assert_true(log_need_real_git(["--ancestry-path=topic", "B"]))
+  assert_true(log_need_real_git(["--graph", "--ancestry-path", "A..B"]))
   assert_true(log_need_real_git(["--simplify-by-decoration"]))
-  assert_true(log_need_real_git(["--simplify-merges"]))
-  assert_true(log_need_real_git(["--parents"]))
-  assert_true(log_need_real_git(["--full-history"]))
+  assert_false(log_need_real_git(["--simplify-merges"]))
+  assert_false(log_need_real_git(["--full-history"]))
   assert_true(log_need_real_git(["--show-pulls"]))
   assert_true(log_need_real_git(["--exclude-first-parent-only"]))
-  assert_true(log_need_real_git(["--show-signature", "HEAD"]))
+  assert_false(log_need_real_git(["--show-signature", "HEAD"]))
+  assert_true(log_need_real_git(["--show-signature", "--oneline", "HEAD"]))
+  assert_true(log_need_real_git(["--show-signature", "--graph", "HEAD"]))
+  assert_true(
+    log_need_real_git(["--show-signature", "--format=fuller", "HEAD"]),
+  )
+  assert_false(log_need_real_git(["--show-signature", "--format=%s", "HEAD"]))
   assert_true(log_need_real_git(["--format=%G?%n%GK", "HEAD"]))
   assert_true(log_need_real_git(["--pretty=format:%GT", "HEAD"]))
   assert_false(log_need_real_git(["--oneline", "HEAD"]))
@@ -130,10 +160,312 @@ test "log: ancestry and simplify options fall back to real git" {
   assert_false(log_need_real_git(["--topo-order"]))
   assert_false(log_need_real_git(["--date-order"]))
   assert_false(log_need_real_git(["--author-date-order"]))
+  assert_false(log_need_real_git(["--parents"]))
 }
 
 ///|
-async test "log: log.showsignature config falls back to real git" {
+async test "log: simplify-merges drops path merge that is TREESAME to a parent" {
+  @bitnative.init_native_io()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-log-simplify-merges-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  grep_test_run_git(root, ["init", "--initial-branch=main", "-q", "repo"])
+  grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  grep_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+
+  fs.write_string(repo_dir + "/target", "base\n")
+  fs.write_string(repo_dir + "/other", "base\n")
+  grep_test_run_git(repo_dir, ["add", "target", "other"])
+  grep_test_run_git(repo_dir, ["commit", "-qm", "base"])
+  grep_test_run_git(repo_dir, ["branch", "side"])
+  fs.write_string(repo_dir + "/other", "main\n")
+  grep_test_run_git(repo_dir, ["commit", "-am", "main", "-q"])
+  grep_test_run_git(repo_dir, ["checkout", "-q", "side"])
+  fs.write_string(repo_dir + "/target", "side\n")
+  grep_test_run_git(repo_dir, ["commit", "-am", "side", "-q"])
+  grep_test_run_git(repo_dir, ["checkout", "-q", "main"])
+  grep_test_run_git(repo_dir, ["merge", "--no-ff", "-m", "merge", "side"])
+
+  assert_eq(
+    trim_string(
+      grep_test_git_stdout(repo_dir, [
+        "log", "--full-history", "--format=%s", "--", "target",
+      ]),
+    ),
+    "merge\nside\nbase",
+  )
+  assert_eq(
+    trim_string(
+      grep_test_git_stdout(repo_dir, [
+        "log", "--simplify-merges", "--format=%s", "--", "target",
+      ]),
+    ),
+    "side\nbase",
+  )
+
+  let git_dir = repo_dir + "/.git"
+  let db = @bitlib.ObjectDb::load(fs, git_dir)
+  let merge_id = @bitrepo.rev_parse(fs, git_dir, "HEAD")
+  let side_id = @bitrepo.rev_parse(fs, git_dir, "side")
+  let base_id = @bitrepo.rev_parse(fs, git_dir, "HEAD^1^")
+  guard merge_id is Some(merge_commit) else { fail("expected merge commit") }
+  guard side_id is Some(side_commit) else { fail("expected side commit") }
+  guard base_id is Some(base_commit) else { fail("expected base commit") }
+  let include_bits : Map[String, Bool] = {}
+  let exclude_bits : Map[String, Bool] = {}
+  assert_true(
+    log_commit_matches_history_filters(
+      fs,
+      git_dir,
+      db,
+      merge_commit,
+      ["target"],
+      include_bits,
+      exclude_bits,
+      false,
+      false,
+      false,
+    ),
+  )
+  assert_false(
+    log_commit_matches_history_filters(
+      fs,
+      git_dir,
+      db,
+      merge_commit,
+      ["target"],
+      include_bits,
+      exclude_bits,
+      false,
+      false,
+      true,
+    ),
+  )
+  assert_true(
+    log_commit_matches_history_filters(
+      fs,
+      git_dir,
+      db,
+      side_commit,
+      ["target"],
+      include_bits,
+      exclude_bits,
+      false,
+      false,
+      true,
+    ),
+  )
+  assert_true(
+    log_commit_matches_history_filters(
+      fs,
+      git_dir,
+      db,
+      base_commit,
+      ["target"],
+      include_bits,
+      exclude_bits,
+      false,
+      false,
+      true,
+    ),
+  )
+
+  cleanup_tree(fs, root)
+}
+
+///|
+test "log: signature output drops status protocol lines" {
+  assert_eq(
+    log_signature_output_lines(
+      "[GNUPG:] GOODSIG 0000000000000000 Test User <test@example.com>\n", "gpg: Good signature from \"Test User <test@example.com>\"\n",
+    ),
+    ["gpg: Good signature from \"Test User <test@example.com>\""],
+  )
+}
+
+///|
+fn log_wbtest_write_commit_object(
+  fs : @bitcore.TestFs,
+  git_dir : String,
+  filename : String,
+  content : String,
+  parents : Array[@bitcore.ObjectId],
+  timestamp : Int64,
+  message : String,
+) -> @bitcore.ObjectId raise Error {
+  let (blob_id, blob_bytes) = @bitcore.create_blob_string(content)
+  @bitlib.write_object_bytes(fs, git_dir, blob_id, blob_bytes)
+  let entry = @bitcore.TreeEntry::new("100644", filename, blob_id)
+  let (tree_id, tree_bytes) = @bitcore.create_tree([entry])
+  @bitlib.write_object_bytes(fs, git_dir, tree_id, tree_bytes)
+  let commit = @bitcore.Commit::new(
+    tree_id,
+    parents,
+    "Test <t@example.com>",
+    timestamp,
+    "+0000",
+    "Test <t@example.com>",
+    timestamp,
+    "+0000",
+    message + "\n",
+  )
+  let (commit_id, commit_bytes) = @bitcore.create_commit(commit)
+  @bitlib.write_object_bytes(fs, git_dir, commit_id, commit_bytes)
+  commit_id
+}
+
+///|
+test "log: ancestry path keeps commits descended from bottom commits" {
+  let fs = @bitcore.TestFs::new()
+  let git_dir = "/repo/.git"
+  ignore(try? @bitlib.init_repo(fs, "/repo"))
+
+  let root = log_wbtest_write_commit_object(
+    fs,
+    git_dir,
+    "root.txt",
+    "root\n",
+    [],
+    1700000000L,
+    "root",
+  )
+  let bottom = log_wbtest_write_commit_object(
+    fs,
+    git_dir,
+    "bottom.txt",
+    "bottom\n",
+    [root],
+    1700000001L,
+    "bottom",
+  )
+  let side = log_wbtest_write_commit_object(
+    fs,
+    git_dir,
+    "side.txt",
+    "side\n",
+    [root],
+    1700000002L,
+    "side",
+  )
+  let merge = log_wbtest_write_commit_object(
+    fs,
+    git_dir,
+    "merge.txt",
+    "merge\n",
+    [bottom, side],
+    1700000003L,
+    "merge",
+  )
+
+  let exclude_ids : Map[String, Bool] = {}
+  exclude_ids[root.to_hex()] = true
+  exclude_ids[bottom.to_hex()] = true
+  let entries = log_walk_commits(
+    fs,
+    git_dir,
+    [merge],
+    exclude_ids,
+    10,
+    0L,
+    9223372036854775807L,
+    false,
+  )
+  assert_eq(entries.length(), 2)
+  assert_true(log_commit_has_ancestor(fs, git_dir, merge, [bottom]))
+  assert_false(log_commit_has_ancestor(fs, git_dir, side, [bottom]))
+
+  let ancestry_entries : Array[LogWalkEntry] = []
+  for entry in entries {
+    if log_commit_has_ancestor(fs, git_dir, entry.id, [bottom]) {
+      ancestry_entries.push(entry)
+    }
+  }
+  assert_eq(ancestry_entries.length(), 1)
+  assert_eq(ancestry_entries[0].id.to_hex(), merge.to_hex())
+}
+
+///|
+test "log: boundary walk appends excluded parent with marker flag" {
+  let fs = @bitcore.TestFs::new()
+  ignore(try? @bitlib.init_repo(fs, "/repo"))
+
+  fs.write_string("/repo/file.txt", "a\n")
+  @bitlib.add_paths(fs, fs, "/repo", ["file.txt"])
+  let first = @bitlib.commit(
+    fs, fs, "/repo", "first\n", "Test <t@example.com>", 1700000000L,
+  )
+
+  fs.write_string("/repo/file.txt", "b\n")
+  @bitlib.add_paths(fs, fs, "/repo", ["file.txt"])
+  let second = @bitlib.commit(
+    fs, fs, "/repo", "second\n", "Test <t@example.com>", 1700000001L,
+  )
+
+  fs.write_string("/repo/file.txt", "c\n")
+  @bitlib.add_paths(fs, fs, "/repo", ["file.txt"])
+  let third = @bitlib.commit(
+    fs, fs, "/repo", "third\n", "Test <t@example.com>", 1700000002L,
+  )
+
+  let exclude_ids : Map[String, Bool] = {}
+  exclude_ids[first.to_hex()] = true
+  exclude_ids[second.to_hex()] = true
+  let entries = log_walk_commits(
+    fs,
+    "/repo/.git",
+    [third],
+    exclude_ids,
+    1,
+    0L,
+    9223372036854775807L,
+    false,
+    show_boundary=true,
+  )
+
+  assert_eq(entries.length(), 2)
+  assert_eq(entries[0].id.to_hex(), third.to_hex())
+  assert_false(entries[0].boundary)
+  assert_eq(entries[1].id.to_hex(), second.to_hex())
+  assert_true(entries[1].boundary)
+  assert_eq(entries[1].message, "second")
+}
+
+///|
+test "log: parents format extends commit identity" {
+  let id = @bitcore.ObjectId::from_hex(
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  )
+  let p1 = @bitcore.ObjectId::from_hex(
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  )
+  let p2 = @bitcore.ObjectId::from_hex(
+    "cccccccccccccccccccccccccccccccccccccccc",
+  )
+
+  assert_eq(
+    log_format_commit_identity(id, [p1, p2], 7, false, true),
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb cccccccccccccccccccccccccccccccccccccccc",
+  )
+  assert_eq(
+    log_format_commit_identity(id, [p1, p2], 7, true, true),
+    "aaaaaaa bbbbbbb ccccccc",
+  )
+  assert_eq(
+    log_format_commit_identity(id, [p1], 12, true, true),
+    "aaaaaaaaaaaa bbbbbbbbbbbb",
+  )
+  assert_eq(
+    log_format_commit_identity(id, [p1], 7, false, false),
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  )
+}
+
+///|
+async test "log: log.showsignature config enables native signature display" {
   @bitnative.init_native_io()
   let fs = OsFs::new()
   let root = "/tmp/bit-test-log-showsignature-" +
@@ -144,7 +476,8 @@ async test "log: log.showsignature config falls back to real git" {
   commit_wbtest_run_git(root, ["init", "--initial-branch=main", "-q", "."])
   commit_wbtest_run_git(root, ["config", "log.showsignature", "true"])
 
-  assert_true(log_need_real_git(["HEAD"], git_dir=root + "/.git"))
+  assert_false(log_need_real_git(["HEAD"], git_dir=root + "/.git"))
+  assert_true(log_need_real_git(["--oneline", "HEAD"], git_dir=root + "/.git"))
 
   cleanup_tree(fs, root)
 }
@@ -609,7 +942,7 @@ test "log: log_parse_entry_from_obj" {
   let tree = @bitcore.ObjectId::from_hex(
     "0000000000000000000000000000000000000000",
   )
-  let entry = log_parse_entry_from_obj(id, data, tree, 0)
+  let entry = log_parse_entry_from_obj(id, data, tree, [])
   assert_eq(entry.message, "Test commit message")
   assert_eq(entry.author, "Test User <test@example.com>")
   assert_eq(entry.timestamp, 1700000000L)

@@ -1,25 +1,75 @@
 ///|
-
-///|
-fn merge_has_signing_args(args : Array[String]) -> Bool {
-  for arg in args {
-    if arg == "-S" ||
-      arg == "--gpg-sign" ||
-      arg == "--no-gpg-sign" ||
-      arg.has_prefix("--gpg-sign=") {
-      return true
-    }
-  }
-  false
-}
-
-///|
 fn merge_requires_real_git(
   args : Array[String],
   git_dir? : String = "",
 ) -> Bool {
-  merge_has_signing_args(args) ||
-  (git_dir.length() > 0 && signing_commit_config_enabled(git_dir))
+  ignore(args)
+  ignore(git_dir)
+  false
+}
+
+///|
+async fn merge_write_commit_object(
+  fs : OsFs,
+  root : String,
+  git_dir : String,
+  commit : @bitcore.Commit,
+  algo : @bitobject.HashAlgorithm,
+  sign : Bool,
+  signing_key_override : String?,
+) -> @bitcore.ObjectId raise Error {
+  let payload = @bitobject.serialize_commit_content(commit)
+  let final_payload = if sign {
+    let signature = signing_sign_payload(
+      fs, root, git_dir, payload, signing_key_override,
+    )
+    signing_inject_commit_signature(payload, signature)
+  } else {
+    payload
+  }
+  let (commit_id, compressed) = @bitobject.create_object_with_algo(
+    algo,
+    @bitcore.ObjectType::Commit,
+    final_payload,
+  )
+  @bitlib.write_object_bytes(fs, git_dir, commit_id, compressed)
+  commit_id
+}
+
+///|
+async fn merge_rewrite_signed_commit(
+  fs : OsFs,
+  root : String,
+  git_dir : String,
+  unsigned_id : @bitcore.ObjectId,
+  message : String,
+  author : String,
+  timestamp : Int64,
+  algo : @bitobject.HashAlgorithm,
+  signing_key_override : String?,
+) -> @bitcore.ObjectId raise Error {
+  let db = @bitlib.ObjectDb::load(fs, git_dir)
+  let obj = db.get(fs, unsigned_id)
+  guard obj is Some(o) else {
+    raise @bitcore.GitError::InvalidObject(
+      "Cannot read merge commit: \{unsigned_id.to_hex()}",
+    )
+  }
+  let info = @bitcore.parse_commit(o.data)
+  let commit = @bitcore.Commit::new(
+    info.tree,
+    info.parents,
+    author,
+    timestamp,
+    "+0000",
+    author,
+    timestamp,
+    "+0000",
+    message,
+  )
+  merge_write_commit_object(
+    fs, root, git_dir, commit, algo, true, signing_key_override,
+  )
 }
 
 ///|
@@ -60,6 +110,8 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
   let mut continue_merge = false
   let mut allow_unrelated = false
   let mut strategy : String? = None
+  let mut gpg_sign : Bool? = None
+  let mut signing_key : String? = None
   let merge_heads : Array[String] = []
   let mut i = 0
   while i < args.length() {
@@ -126,6 +178,32 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
         i += 1
         continue
       }
+      "-S" | "--gpg-sign" => {
+        gpg_sign = Some(true)
+        i += 1
+        continue
+      }
+      "--no-gpg-sign" => {
+        gpg_sign = Some(false)
+        signing_key = None
+        i += 1
+        continue
+      }
+      _ if arg.has_prefix("--gpg-sign=") => {
+        gpg_sign = Some(true)
+        let value = string_slice_from(arg, 11)
+        if value.length() > 0 {
+          signing_key = Some(value)
+        }
+        i += 1
+        continue
+      }
+      _ if arg.has_prefix("-S") && !arg.has_prefix("--") && arg.length() > 2 => {
+        gpg_sign = Some(true)
+        signing_key = Some(string_slice_from(arg, 2))
+        i += 1
+        continue
+      }
       "-s" if i + 1 < args.length() => {
         strategy = Some(args[i + 1])
         i += 2
@@ -172,6 +250,11 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
     }
     i += 1
   }
+  let should_sign = match gpg_sign {
+    Some(flag) => flag
+    None => signing_commit_config_enabled(git_dir)
+  }
+  let commit_algo = signing_repo_hash_algorithm(fs, git_dir)
   // Handle octopus merge (>1 head)
   if merge_heads.length() > 1 {
     handle_octopus_merge(
@@ -184,6 +267,9 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
       timestamp=get_commit_timestamp(),
       quiet~,
       no_ff~,
+      sign=should_sign,
+      signing_key_override=signing_key,
+      algo=commit_algo,
     )
     return
   }
@@ -254,7 +340,33 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
     let merge_heads = read_merge_head_ids(rfs, git_dir)
     let commit_id = if merge_heads.length() > 0 {
       commit_with_merge_heads(
-        wfs, rfs, root, msg, author, timestamp, author, timestamp, merge_heads, false,
+        wfs,
+        rfs,
+        root,
+        msg,
+        author,
+        timestamp,
+        author,
+        timestamp,
+        merge_heads,
+        false,
+        algo=commit_algo,
+        sign=should_sign,
+        signing_fs=if should_sign { Some(fs) } else { None },
+        signing_key_override=signing_key,
+      )
+    } else if should_sign {
+      commit_signed(
+        fs,
+        rfs,
+        root,
+        msg,
+        author,
+        timestamp,
+        committer=author,
+        committer_timestamp=timestamp,
+        algo=commit_algo,
+        signing_key_override=signing_key,
       )
     } else {
       @bitlib.commit(wfs, rfs, root, msg, author, timestamp)
@@ -325,22 +437,10 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
       "+0000",
       msg + "\n",
     )
-    let (commit_id, commit_data) = @bitcore.create_commit(commit)
-    @bitlib.write_object_bytes(wfs, git_dir, commit_id, commit_data)
-    let head_path = git_dir + "/HEAD"
-    let head_content = rfs.read_file(head_path) |> decode_bytes |> trim_string
-    if head_content.has_prefix("ref: ") {
-      let ref_path = git_dir +
-        "/" +
-        String::unsafe_substring(
-          head_content,
-          start=5,
-          end=head_content.length(),
-        )
-      wfs.write_string(ref_path, commit_id.to_hex() + "\n")
-    } else {
-      wfs.write_string(head_path, commit_id.to_hex() + "\n")
-    }
+    let commit_id = merge_write_commit_object(
+      fs, root, git_dir, commit, commit_algo, should_sign, signing_key,
+    )
+    @bitlib.update_head_ref(wfs, rfs, git_dir, commit_id)
     let short = String::unsafe_substring(commit_id.to_hex(), start=0, end=7)
     if !quiet {
       print_line("Merge made by the 'ours' strategy. [\{short}]")
@@ -438,23 +538,10 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
       "+0000",
       msg + "\n",
     )
-    let (commit_id, commit_data) = @bitcore.create_commit(commit)
-    @bitlib.write_object_bytes(wfs, git_dir, commit_id, commit_data)
-    // Update HEAD
-    let head_path = git_dir + "/HEAD"
-    let head_content = rfs.read_file(head_path) |> decode_bytes |> trim_string
-    if head_content.has_prefix("ref: ") {
-      let ref_path = git_dir +
-        "/" +
-        String::unsafe_substring(
-          head_content,
-          start=5,
-          end=head_content.length(),
-        )
-      wfs.write_string(ref_path, commit_id.to_hex() + "\n")
-    } else {
-      wfs.write_string(head_path, commit_id.to_hex() + "\n")
-    }
+    let commit_id = merge_write_commit_object(
+      fs, root, git_dir, commit, commit_algo, should_sign, signing_key,
+    )
+    @bitlib.update_head_ref(wfs, rfs, git_dir, commit_id)
     // Checkout the new tree
     ignore(
       run_checkout_with_sensitive_hooks(
@@ -502,7 +589,20 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
     @bitlib.MergeStatus::Merged =>
       match result.commit_id {
         Some(id) => {
-          let short = String::unsafe_substring(id.to_hex(), start=0, end=7)
+          let final_id = if should_sign {
+            let signed_id = merge_rewrite_signed_commit(
+              fs, root, git_dir, id, msg, author, timestamp, commit_algo, signing_key,
+            )
+            @bitlib.update_head_ref(wfs, rfs, git_dir, signed_id)
+            signed_id
+          } else {
+            id
+          }
+          let short = String::unsafe_substring(
+            final_id.to_hex(),
+            start=0,
+            end=7,
+          )
           if !quiet {
             print_line("Merge made by the 'ort' strategy. [\{short}]")
           }
@@ -533,6 +633,9 @@ async fn handle_octopus_merge(
   timestamp~ : Int64,
   quiet~ : Bool,
   no_ff~ : Bool,
+  sign? : Bool = false,
+  signing_key_override? : String? = None,
+  algo? : @bitobject.HashAlgorithm = @bitobject.HashAlgorithm::Sha1,
 ) -> Unit raise Error {
   let rfs : &@bitcore.RepoFileSystem = fs
   let wfs : &@bitcore.FileSystem = fs
@@ -674,19 +777,10 @@ async fn handle_octopus_merge(
     "+0000",
     msg + "\n",
   )
-  let (commit_id, commit_data) = @bitcore.create_commit(commit)
-  @bitlib.write_object_bytes(wfs, git_dir, commit_id, commit_data)
-  // Update HEAD ref
-  let head_path = git_dir + "/HEAD"
-  let head_content = rfs.read_file(head_path) |> decode_bytes |> trim_string
-  if head_content.has_prefix("ref: ") {
-    let ref_path = git_dir +
-      "/" +
-      String::unsafe_substring(head_content, start=5, end=head_content.length())
-    wfs.write_string(ref_path, commit_id.to_hex() + "\n")
-  } else {
-    wfs.write_string(head_path, commit_id.to_hex() + "\n")
-  }
+  let commit_id = merge_write_commit_object(
+    fs, root, git_dir, commit, algo, sign, signing_key_override,
+  )
+  @bitlib.update_head_ref(wfs, rfs, git_dir, commit_id)
   // Truncate reflog to remove intermediate merge entries, then add one entry
   // for the final octopus commit. This prevents git fsck from reporting
   // "invalid reflog entry" errors for unreachable intermediate commits.

@@ -268,6 +268,40 @@ test "clone: recurse submodule filters are written as config multivar" {
 }
 
 ///|
+test "clone: file URL depth and filter select native transport clone" {
+  assert_true(
+    clone_use_transport_for_local_source(
+      "file:///tmp/source.git",
+      false,
+      true,
+      false,
+      (None : String?),
+      "origin",
+    ),
+  )
+  assert_true(
+    clone_use_transport_for_local_source(
+      "file:///tmp/source.git",
+      false,
+      false,
+      true,
+      (None : String?),
+      "origin",
+    ),
+  )
+  assert_false(
+    clone_use_transport_for_local_source(
+      "file:///tmp/source.git",
+      false,
+      true,
+      false,
+      Some("/tmp/git-dir"),
+      "origin",
+    ),
+  )
+}
+
+///|
 test "clone: sparse flag initializes cone sparse-checkout metadata" {
   let fs = OsFs::new()
   let root = "/tmp/bit-clone-sparse-" + get_current_timestamp().to_string()

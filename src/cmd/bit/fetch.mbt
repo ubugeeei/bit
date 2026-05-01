@@ -147,6 +147,8 @@ async fn handle_fetch(args : Array[String]) -> Unit raise Error {
   let mut explicit_filter_flag = false
   let mut explicit_no_filter = false
   let mut filter = @protocol.FilterSpec::NoFilter
+  let mut depth = 0
+  let mut unshallow = false
   let mut refetch = false
   let mut update_head_ok = false
   let mut quiet = false
@@ -179,6 +181,36 @@ async fn handle_fetch(args : Array[String]) -> Unit raise Error {
     }
     if arg == "--refetch" {
       refetch = true
+      i += 1
+      continue
+    }
+    if arg == "--unshallow" {
+      unshallow = true
+      i += 1
+      continue
+    }
+    if arg == "--depth" && i + 1 < args.length() {
+      depth = @string.parse_int(args[i + 1]) catch {
+        err => {
+          if @async.is_being_cancelled() || @async.is_cancellation_error(err) {
+            raise err
+          }
+          0
+        }
+      }
+      i += 2
+      continue
+    }
+    if arg.has_prefix("--depth=") {
+      let depth_str = String::unsafe_substring(arg, start=8, end=arg.length())
+      depth = @string.parse_int(depth_str) catch {
+        err => {
+          if @async.is_being_cancelled() || @async.is_cancellation_error(err) {
+            raise err
+          }
+          0
+        }
+      }
       i += 1
       continue
     }
@@ -234,12 +266,8 @@ async fn handle_fetch(args : Array[String]) -> Unit raise Error {
       i += 1
       continue
     }
-    if arg == "--unshallow" ||
-      arg == "--depth" ||
-      arg == "--deepen" ||
-      arg.has_prefix("--depth=") ||
-      arg.has_prefix("--deepen=") {
-      // Shallow/unshallow operations: delegate to real git
+    if arg == "--deepen" || arg.has_prefix("--deepen=") {
+      // Relative deepen is not represented by the current upload-pack wrapper.
       delegate_fetch_to_real_git(args)
       return
     }
@@ -366,6 +394,8 @@ async fn handle_fetch(args : Array[String]) -> Unit raise Error {
   }
   let force_transport = (
       filter.is_partial() ||
+      depth > 0 ||
+      unshallow ||
       refetch ||
       local_promisor_remote ||
       is_partial_clone
@@ -379,6 +409,8 @@ async fn handle_fetch(args : Array[String]) -> Unit raise Error {
     resolved_url,
     explicit_refspecs,
     filter~,
+    depth~,
+    unshallow~,
     force_transport~,
     update_head_ok~,
     quiet~,

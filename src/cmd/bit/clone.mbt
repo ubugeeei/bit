@@ -33,6 +33,24 @@ fn clone_maybe_enable_sparse_checkout(
 }
 
 ///|
+fn clone_use_transport_for_local_source(
+  remote_display : String,
+  no_local : Bool,
+  has_depth : Bool,
+  has_filter : Bool,
+  separate_git_dir : String?,
+  remote_name : String,
+) -> Bool {
+  let is_local_path = remote_display.has_prefix("/") &&
+    !remote_display.has_prefix("file://")
+  let is_file_url = remote_display.has_prefix("file://")
+  let needs_transport = has_depth || has_filter
+  ((no_local && !is_local_path && !is_file_url) || needs_transport) &&
+  separate_git_dir is None &&
+  remote_name == "origin"
+}
+
+///|
 async fn handle_clone(args : Array[String]) -> Unit raise Error {
   let fallback_root = get_work_root()
   let command_root = clone_command_root(fallback_root)
@@ -551,21 +569,14 @@ async fn handle_clone(args : Array[String]) -> Unit raise Error {
         normalize_path(command_root + "/" + remote_url)
       }
       // --no-local is ignored for local paths (bit never uses hardlinks).
-      // For file:// URLs with --depth or --filter, delegate to real git
-      // which handles the upload-pack transport natively.
-      let is_local_path = remote_display.has_prefix("/") &&
-        !remote_display.has_prefix("file://")
-      let is_file_url = remote_display.has_prefix("file://")
-      let needs_transport = filter.is_partial() || depth > 0
-      if is_file_url && needs_transport {
-        delegate_clone_to_real_git(args)
-        return
-      }
-      let use_transport_clone = (
-          (no_local && !is_local_path && !is_file_url) || needs_transport
-        ) &&
-        separate_git_dir is None &&
-        remote_name == "origin"
+      let use_transport_clone = clone_use_transport_for_local_source(
+        remote_display,
+        no_local,
+        depth > 0,
+        filter.is_partial(),
+        separate_git_dir,
+        remote_name,
+      )
       if use_transport_clone {
         let clone_filter = resolve_clone_transport_filter(
           remote_display, transport_prefer_v2, filter,
@@ -1904,22 +1915,3 @@ async fn warn_case_insensitive_collisions_from_commit(
     }
   }
 }
-
-///|
-async fn delegate_clone_to_real_git(args : Array[String]) -> Unit raise Error {
-  let argv : Array[String] = ["clone"]
-  for arg in args {
-    argv.push(arg)
-  }
-  let code = @process.run(
-    resolve_real_git_for_dispatch(),
-    argv,
-    inherit_env=true,
-    stdin=@stdio.stdin,
-    stdout=@stdio.stdout,
-    stderr=@stdio.stderr,
-  )
-  @sys.exit(code)
-}
-
-///|

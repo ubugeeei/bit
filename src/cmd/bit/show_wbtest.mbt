@@ -150,6 +150,7 @@ test "show: pretty format uses generic commit formatter" {
     fs,
     zero,
     str_to_bytes(commit_text),
+    [],
     false,
     Some("%an,%ae,%ad%n"),
     true,
@@ -177,6 +178,7 @@ test "show: pretty format honors body modifiers" {
     fs,
     zero,
     str_to_bytes(commit_text),
+    [],
     false,
     Some("%s%+bThanks%n"),
     true,
@@ -203,6 +205,7 @@ test "show: default commit rendering does not add trailing blank message lines" 
     fs,
     zero,
     str_to_bytes(commit_text),
+    [],
     false,
     None,
     true,
@@ -220,11 +223,81 @@ test "show: default commit rendering does not add trailing blank message lines" 
 }
 
 ///|
+test "show: default commit rendering inserts signature after commit line" {
+  let fs = @bitcore.TestFs::new()
+  let git_dir = "/repo/.git"
+  fs.mkdir_p(git_dir)
+  let db = @bitlib.ObjectDb::load(fs, git_dir)
+  let zero = show_wbtest_zero_id()
+  let commit_text = "tree " +
+    zero.to_hex() +
+    "\nauthor Alice <alice@example.com> 1700000000 +0900\ncommitter Alice <alice@example.com> 1700000000 +0900\n\nsubject\n"
+  let rendered = show_render_commit_block(
+    db,
+    fs,
+    zero,
+    str_to_bytes(commit_text),
+    ["gpg: Good signature from \"Test User <test@example.com>\""],
+    false,
+    None,
+    true,
+    false,
+    [],
+    GrepPatternType::Basic,
+    false,
+  ).unwrap()
+  let expected = "commit 0000000000000000000000000000000000000000\n" +
+    "gpg: Good signature from \"Test User <test@example.com>\"\n" +
+    "Author: Alice <alice@example.com>\n" +
+    "Date:   Wed Nov 15 07:13:20 2023 +0900\n" +
+    "\n" +
+    "    subject\n\n"
+  assert_eq(rendered, expected)
+}
+
+///|
+test "show: pretty format prefixes signature output" {
+  let fs = @bitcore.TestFs::new()
+  let git_dir = "/repo/.git"
+  fs.mkdir_p(git_dir)
+  let db = @bitlib.ObjectDb::load(fs, git_dir)
+  let zero = show_wbtest_zero_id()
+  let commit_text = "tree " +
+    zero.to_hex() +
+    "\nauthor Alice <alice@example.com> 1700000000 +0900\ncommitter Alice <alice@example.com> 1700000000 +0900\n\nsubject\n"
+  let rendered = show_render_commit_block(
+    db,
+    fs,
+    zero,
+    str_to_bytes(commit_text),
+    ["gpg: Good signature from \"Test User <test@example.com>\""],
+    false,
+    Some("%s"),
+    true,
+    false,
+    [],
+    GrepPatternType::Basic,
+    false,
+  ).unwrap()
+  assert_eq(
+    rendered, "gpg: Good signature from \"Test User <test@example.com>\"\nsubject\n",
+  )
+}
+
+///|
 test "show: reference pretty format handled natively" {
   assert_false(show_requires_real_git(["-s", "--pretty=reference", "HEAD"]))
   assert_false(show_requires_real_git(["--format=reference", "HEAD"]))
   assert_false(show_requires_real_git(["-s", "--pretty=%s", "HEAD"]))
-  assert_true(show_requires_real_git(["--show-signature", "HEAD"]))
+  assert_false(show_requires_real_git(["--show-signature", "HEAD"]))
+  assert_true(show_requires_real_git(["--show-signature", "--oneline", "HEAD"]))
+  assert_true(show_requires_real_git(["--show-signature", "--graph", "HEAD"]))
+  assert_true(
+    show_requires_real_git(["--show-signature", "--format=fuller", "HEAD"]),
+  )
+  assert_false(
+    show_requires_real_git(["--show-signature", "--format=%s", "HEAD"]),
+  )
   assert_true(show_requires_real_git(["-s", "--pretty=%G?", "HEAD"]))
 }
 
@@ -274,7 +347,16 @@ async test "show: command path prints graft deprecation advice and honors config
   assert_eq(suppressed_stderr, "")
 
   show_wbtest_run_git(repo_dir, ["config", "log.showsignature", "true"])
-  assert_true(show_requires_real_git(["HEAD"], git_dir=repo_dir + "/.git"))
+  assert_false(show_requires_real_git(["HEAD"], git_dir=repo_dir + "/.git"))
+  assert_true(
+    show_requires_real_git(["--oneline", "HEAD"], git_dir=repo_dir + "/.git"),
+  )
+  assert_false(
+    show_requires_real_git(
+      ["--no-show-signature", "--oneline", "HEAD"],
+      git_dir=repo_dir + "/.git",
+    ),
+  )
 
   cleanup_tree(fs, root)
 }

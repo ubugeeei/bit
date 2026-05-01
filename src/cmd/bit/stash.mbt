@@ -22,12 +22,18 @@ async fn handle_stash(args : Array[String]) -> Unit raise Error {
   }
   match subcmd {
     "push" | "save" => {
-      // Parse message option
+      // Parse push options
       let mut message = ""
+      let mut patch = false
       let mut i = 0
       while i < rest.length() {
         let arg = rest[i]
         match arg {
+          "-p" | "--patch" => {
+            patch = true
+            i += 1
+            continue
+          }
           "-m" | "--message" if i + 1 < rest.length() => {
             message = rest[i + 1]
             i += 2
@@ -39,7 +45,40 @@ async fn handle_stash(args : Array[String]) -> Unit raise Error {
       }
       let author = get_author_string()
       let timestamp = get_commit_timestamp()
-      let result = @bitlib.stash_push(fs, fs, root, message, author, timestamp)
+      let result = if patch {
+        let mut accept_rest = false
+        let mut reject_rest = false
+        let selector = async fn(
+          hunk : @bitlib.StashPatchHunk,
+          index : Int,
+          total : Int,
+        ) -> Bool {
+          if accept_rest {
+            return true
+          }
+          if reject_rest {
+            return false
+          }
+          let answer = stash_prompt_patch_hunk(hunk, index, total)
+          match answer {
+            "y" => true
+            "a" => {
+              accept_rest = true
+              true
+            }
+            "d" | "q" => {
+              reject_rest = true
+              false
+            }
+            _ => false
+          }
+        }
+        @bitlib.stash_push_patch(
+          fs, fs, root, message, author, timestamp, selector,
+        )
+      } else {
+        @bitlib.stash_push(fs, fs, root, message, author, timestamp)
+      }
       match result {
         Some(id) => {
           let short = String::unsafe_substring(id.to_hex(), start=0, end=7)
@@ -150,6 +189,68 @@ fn parse_stash_index(args : Array[String]) -> Int {
     return n
   }
   0
+}
+
+///|
+async fn stash_prompt_patch_hunk(
+  hunk : @bitlib.StashPatchHunk,
+  index : Int,
+  total : Int,
+) -> String {
+  for line in hunk.display_lines {
+    print_line(line)
+  }
+  while true {
+    print_str(
+      "(\{(index + 1).to_string()}/\{total.to_string()}) Stash this hunk [y,n,q,a,d,?]? ",
+    )
+    let answer = stash_read_patch_answer()
+    if answer == "?" {
+      print_line("y - stash this hunk")
+      print_line("n - do not stash this hunk")
+      print_line("q - quit; do not stash this hunk or remaining hunks")
+      print_line("a - stash this hunk and all remaining hunks")
+      print_line("d - do not stash this hunk or remaining hunks")
+      continue
+    }
+    return answer
+  }
+  "n"
+}
+
+///|
+async fn stash_read_patch_answer() -> String {
+  while true {
+    match @stdio.stdin.read_some(max_len=1) {
+      None => return "n"
+      Some(bytes) => {
+        let text = decode_bytes(bytes).to_lower()
+        if text.length() == 0 ||
+          text.has_prefix("\n") ||
+          text.has_prefix("\r") ||
+          text.has_prefix(" ") ||
+          text.has_prefix("\t") {
+          continue
+        }
+        if text.has_prefix("y") {
+          return "y"
+        } else if text.has_prefix("n") {
+          return "n"
+        } else if text.has_prefix("q") {
+          return "q"
+        } else if text.has_prefix("a") {
+          return "a"
+        } else if text.has_prefix("d") {
+          return "d"
+        } else if text.has_prefix("?") {
+          return "?"
+        } else {
+          return "n"
+        }
+      }
+    }
+  }
+  "n"
 }
 
 ///|

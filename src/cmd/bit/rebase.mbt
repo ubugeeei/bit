@@ -38,13 +38,32 @@ fn rebase_short_option_cluster_contains(arg : String, flag : UInt16) -> Bool {
 }
 
 ///|
-fn rebase_has_signing_args(args : Array[String]) -> Bool {
+fn rebase_is_inline_signing_arg(arg : String) -> Bool {
+  arg.has_prefix("-S") && !arg.has_prefix("--")
+}
+
+///|
+fn rebase_signing_override(args : Array[String]) -> Bool? {
+  let mut result : Bool? = None
   for arg in args {
-    if arg == "-S" ||
+    if arg == "--no-gpg-sign" {
+      result = Some(false)
+      continue
+    }
+    if rebase_is_inline_signing_arg(arg) ||
       rebase_short_option_cluster_contains(arg, ('S' : UInt16)) ||
       arg == "--gpg-sign" ||
-      arg == "--no-gpg-sign" ||
       arg.has_prefix("--gpg-sign=") {
+      result = Some(true)
+    }
+  }
+  result
+}
+
+///|
+fn rebase_uses_rebase_merges_mode(args : Array[String]) -> Bool {
+  for arg in args {
+    if arg == "--rebase-merges" || arg.has_prefix("--rebase-merges=") {
       return true
     }
   }
@@ -57,7 +76,11 @@ fn rebase_has_complex_mode_args(args : Array[String]) -> Bool {
     // --rebase-merges is now natively supported, so not listed here
     if arg == "--update-refs" ||
       arg == "--no-update-refs" ||
-      (rebase_short_option_cluster_contains(arg, ('x' : UInt16)) && arg != "-x") ||
+      (
+        rebase_short_option_cluster_contains(arg, ('x' : UInt16)) &&
+        arg != "-x" &&
+        !rebase_is_inline_signing_arg(arg)
+      ) ||
       arg == "--strategy" ||
       arg.has_prefix("--strategy=") ||
       arg == "-X" ||
@@ -98,10 +121,11 @@ fn rebase_requires_real_git(
   if rebase_has_complex_mode_args(args) {
     return true
   }
-  if git_dir.length() > 0 && signing_commit_config_enabled(git_dir) {
-    return true
+  let signing_requested = match rebase_signing_override(args) {
+    Some(flag) => flag
+    None => git_dir.length() > 0 && signing_commit_config_enabled(git_dir)
   }
-  if rebase_has_signing_args(args) {
+  if signing_requested && rebase_uses_rebase_merges_mode(args) {
     return true
   }
   if git_dir.length() > 0 && rebase_has_state_action_args(args) {
@@ -114,6 +138,285 @@ fn rebase_requires_real_git(
     }
   }
   false
+}
+
+///|
+fn rebase_signing_state_path(git_dir : String) -> String {
+  git_dir + "/rebase-merge/bit-gpg-sign"
+}
+
+///|
+fn rebase_read_signing_state(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+) -> (Bool, String?) {
+  let path = rebase_signing_state_path(git_dir)
+  if !rfs.is_file(path) {
+    return (false, None)
+  }
+  let value = trim_string(
+    decode_bytes(rfs.read_file(path) catch { _ => Bytes::default() }),
+  )
+  (true, if value.length() > 0 { Some(value) } else { None })
+}
+
+///|
+fn rebase_write_signing_state(
+  fs : &@bitcore.FileSystem,
+  git_dir : String,
+  signing_key : String?,
+) -> Unit {
+  fs.mkdir_p(git_dir + "/rebase-merge") catch {
+    _ => ()
+  }
+  let value = match signing_key {
+    Some(key) => key
+    None => ""
+  }
+  fs.write_string(rebase_signing_state_path(git_dir), value + "\n") catch {
+    _ => ()
+  }
+}
+
+///|
+fn rebase_clear_signing_state(
+  fs : &@bitcore.FileSystem,
+  git_dir : String,
+) -> Unit {
+  fs.remove_file(rebase_signing_state_path(git_dir)) catch {
+    _ => ()
+  }
+}
+
+///|
+fn rebase_commit_header_value(data : Bytes, prefix : String) -> String? {
+  let text = decode_bytes(data)
+  for line_view in text.split("\n") {
+    let line = line_view.to_string()
+    if line.length() == 0 {
+      break
+    }
+    if line.has_prefix(prefix) {
+      return Some(
+        String::unsafe_substring(line, start=prefix.length(), end=line.length()),
+      )
+    }
+  }
+  None
+}
+
+///|
+fn rebase_commit_identity(
+  data : Bytes,
+  prefix : String,
+) -> (String, Int64, String) raise Error {
+  let raw = match rebase_commit_header_value(data, prefix) {
+    Some(value) => value
+    None =>
+      raise @bitcore.GitError::InvalidObject(
+        "Missing \{prefix.trim().to_string()} header",
+      )
+  }
+  let (name, email, timestamp, timezone) = parse_ident_parts(raw)
+  let identity = if email.length() > 0 {
+    name + " <" + email + ">"
+  } else {
+    name
+  }
+  (identity, timestamp, timezone)
+}
+
+///|
+async fn rebase_write_signed_commit_object(
+  fs : OsFs,
+  root : String,
+  git_dir : String,
+  commit : @bitcore.Commit,
+  algo : @bitobject.HashAlgorithm,
+  signing_key_override : String?,
+) -> @bitcore.ObjectId raise Error {
+  let payload = @bitobject.serialize_commit_content(commit)
+  let signature = signing_sign_payload(
+    fs, root, git_dir, payload, signing_key_override,
+  )
+  let signed_payload = signing_inject_commit_signature(payload, signature)
+  let (commit_id, compressed) = @bitobject.create_object_with_algo(
+    algo,
+    @bitcore.ObjectType::Commit,
+    signed_payload,
+  )
+  @bitlib.write_object_bytes(fs, git_dir, commit_id, compressed)
+  commit_id
+}
+
+///|
+async fn rebase_sign_rewritten_commits(
+  fs : OsFs,
+  rfs : &@bitcore.RepoFileSystem,
+  root : String,
+  git_dir : String,
+  base_id : @bitcore.ObjectId,
+  final_id : @bitcore.ObjectId,
+  signing_key_override : String?,
+  algo : @bitobject.HashAlgorithm,
+) -> @bitcore.ObjectId raise Error {
+  let db = @bitlib.ObjectDb::load(rfs, git_dir)
+  let chain = collect_rebase_commits(db, rfs, final_id, base_id)
+  if chain.length() == 0 {
+    return final_id
+  }
+  let mut parent = base_id
+  let mut signed_id = final_id
+  for commit_id in chain {
+    let obj = db.get(rfs, commit_id)
+    guard obj is Some(o) else {
+      raise @bitcore.GitError::InvalidObject(
+        "Cannot read rebased commit: \{commit_id.to_hex()}",
+      )
+    }
+    let info = @bitcore.parse_commit(o.data)
+    let (author, author_time, author_tz) = rebase_commit_identity(
+      o.data,
+      "author ",
+    )
+    let (committer, commit_time, committer_tz) = rebase_commit_identity(
+      o.data,
+      "committer ",
+    )
+    let parents = if info.parents.length() == 0 {
+      []
+    } else {
+      let ps : Array[@bitcore.ObjectId] = [parent]
+      for i in 1..<info.parents.length() {
+        ps.push(info.parents[i])
+      }
+      ps
+    }
+    let encoding = rebase_commit_header_value(o.data, "encoding ").unwrap_or(
+      "UTF-8",
+    )
+    let commit = @bitcore.Commit::new(
+      info.tree,
+      parents,
+      author,
+      author_time,
+      author_tz,
+      committer,
+      commit_time,
+      committer_tz,
+      extract_commit_message(o.data),
+      encoding~,
+    )
+    signed_id = rebase_write_signed_commit_object(
+      fs, root, git_dir, commit, algo, signing_key_override,
+    )
+    parent = signed_id
+  }
+  signed_id
+}
+
+///|
+async fn rebase_sign_complete_result(
+  fs : OsFs,
+  rfs : &@bitcore.RepoFileSystem,
+  root : String,
+  git_dir : String,
+  base_id : @bitcore.ObjectId,
+  result : @bitlib.RebaseResult,
+  signing_key_override : String?,
+  algo : @bitobject.HashAlgorithm,
+) -> @bitcore.ObjectId? raise Error {
+  match result.status {
+    @bitlib.RebaseStatus::Complete =>
+      match result.commit_id {
+        Some(final_id) => {
+          let signed_id = rebase_sign_rewritten_commits(
+            fs, rfs, root, git_dir, base_id, final_id, signing_key_override, algo,
+          )
+          if signed_id != final_id {
+            let wfs : &@bitcore.FileSystem = fs
+            @bitlib.update_head_ref(wfs, rfs, git_dir, signed_id)
+          }
+          Some(signed_id)
+        }
+        None => None
+      }
+    _ => None
+  }
+}
+
+///|
+async fn rebase_sign_complete_interactive_result(
+  fs : OsFs,
+  rfs : &@bitcore.RepoFileSystem,
+  root : String,
+  git_dir : String,
+  base_id : @bitcore.ObjectId,
+  result : @bitlib.InteractiveRebaseResult,
+  signing_key_override : String?,
+  algo : @bitobject.HashAlgorithm,
+) -> @bitcore.ObjectId? raise Error {
+  match result.status {
+    @bitlib.IRBComplete =>
+      match result.commit_id {
+        Some(final_id) => {
+          let signed_id = rebase_sign_rewritten_commits(
+            fs, rfs, root, git_dir, base_id, final_id, signing_key_override, algo,
+          )
+          if signed_id != final_id {
+            let wfs : &@bitcore.FileSystem = fs
+            @bitlib.update_head_ref(wfs, rfs, git_dir, signed_id)
+          }
+          Some(signed_id)
+        }
+        None => None
+      }
+    _ => None
+  }
+}
+
+///|
+fn rebase_update_signing_state_for_result(
+  fs : &@bitcore.FileSystem,
+  git_dir : String,
+  should_sign : Bool,
+  signing_key : String?,
+  result : @bitlib.RebaseResult,
+) -> Unit {
+  match result.status {
+    @bitlib.RebaseStatus::Conflict =>
+      if should_sign {
+        rebase_write_signing_state(fs, git_dir, signing_key)
+      } else {
+        rebase_clear_signing_state(fs, git_dir)
+      }
+    _ => rebase_clear_signing_state(fs, git_dir)
+  }
+}
+
+///|
+fn rebase_update_signing_state_for_interactive_result(
+  fs : &@bitcore.FileSystem,
+  git_dir : String,
+  should_sign : Bool,
+  signing_key : String?,
+  result : @bitlib.InteractiveRebaseResult,
+) -> Unit {
+  match result.status {
+    @bitlib.IRBConflict =>
+      if should_sign {
+        rebase_write_signing_state(fs, git_dir, signing_key)
+      } else {
+        rebase_clear_signing_state(fs, git_dir)
+      }
+    @bitlib.IRBStopped =>
+      if should_sign {
+        rebase_write_signing_state(fs, git_dir, signing_key)
+      } else {
+        rebase_clear_signing_state(fs, git_dir)
+      }
+    _ => rebase_clear_signing_state(fs, git_dir)
+  }
 }
 
 ///|
@@ -151,6 +454,8 @@ async fn handle_rebase(args : Array[String]) -> Unit raise Error {
   let strategy_options : Array[String] = []
   let mut onto : String? = None
   let mut upstream : String? = None
+  let mut gpg_sign : Bool? = None
+  let mut signing_key : String? = None
   let mut i = 0
   while i < args.length() {
     let arg = args[i]
@@ -192,6 +497,30 @@ async fn handle_rebase(args : Array[String]) -> Unit raise Error {
       "--keep-empty" | "--no-keep-empty" =>
         // Accepted but not specially handled (bit keeps empty commits by default)
         i += 1
+      "-S" | "--gpg-sign" => {
+        gpg_sign = Some(true)
+        i += 1
+      }
+      "--no-gpg-sign" => {
+        gpg_sign = Some(false)
+        signing_key = None
+        i += 1
+      }
+      _ if arg.has_prefix("--gpg-sign=") => {
+        gpg_sign = Some(true)
+        let value = String::unsafe_substring(arg, start=11, end=arg.length())
+        if value.length() > 0 {
+          signing_key = Some(value)
+        }
+        i += 1
+      }
+      _ if arg.has_prefix("-S") && !arg.has_prefix("--") && arg.length() > 2 => {
+        gpg_sign = Some(true)
+        signing_key = Some(
+          String::unsafe_substring(arg, start=2, end=arg.length()),
+        )
+        i += 1
+      }
       "--show-current-patch" => {
         // Show the patch being applied during a stopped rebase
         let stopped_path = git_dir + "/rebase-merge/stopped-sha"
@@ -303,6 +632,18 @@ async fn handle_rebase(args : Array[String]) -> Unit raise Error {
       _ => i += 1
     }
   }
+  let (stored_signing, stored_signing_key) = rebase_read_signing_state(
+    rfs, git_dir,
+  )
+  let should_sign = match gpg_sign {
+    Some(flag) => flag
+    None => stored_signing || signing_commit_config_enabled(git_dir)
+  }
+  let effective_signing_key = match signing_key {
+    Some(key) => Some(key)
+    None => if should_sign { stored_signing_key } else { None }
+  }
+  let commit_algo = signing_repo_hash_algorithm(fs, git_dir)
   // Validate exec commands
   for cmd in exec_cmds {
     if cmd.trim().to_string().length() == 0 {
@@ -320,6 +661,7 @@ async fn handle_rebase(args : Array[String]) -> Unit raise Error {
   // Handle --continue (works for both regular and interactive)
   if do_continue {
     if @bitlib.is_interactive_rebase_in_progress(rfs, git_dir) {
+      let state_before = @bitlib.load_interactive_rebase_state(rfs, git_dir)
       let msg_editor = make_message_editor_callback(fs, git_dir)
       let exec_runner = make_exec_runner_callback(root)
       let result = @bitlib.interactive_rebase_continue_impl(
@@ -329,10 +671,53 @@ async fn handle_rebase(args : Array[String]) -> Unit raise Error {
         msg_editor,
         exec_runner=Some(exec_runner),
       )
+      if should_sign {
+        match state_before {
+          Some(state) =>
+            ignore(
+              rebase_sign_complete_interactive_result(
+                fs,
+                rfs,
+                root,
+                git_dir,
+                state.onto,
+                result,
+                effective_signing_key,
+                commit_algo,
+              ),
+            )
+          None => ()
+        }
+      }
+      rebase_update_signing_state_for_interactive_result(
+        wfs, git_dir, should_sign, effective_signing_key, result,
+      )
       print_interactive_rebase_result(result)
     } else {
+      let state_before = @bitlib.load_rebase_state(rfs, git_dir)
       let result = @bitlib.rebase_continue(fs, fs, root)
-      print_rebase_result(result)
+      let signed_id = if should_sign {
+        match state_before {
+          Some(state) =>
+            rebase_sign_complete_result(
+              fs,
+              rfs,
+              root,
+              git_dir,
+              state.onto,
+              result,
+              effective_signing_key,
+              commit_algo,
+            )
+          None => None
+        }
+      } else {
+        None
+      }
+      rebase_update_signing_state_for_result(
+        wfs, git_dir, should_sign, effective_signing_key, result,
+      )
+      print_rebase_result_with_commit(result, signed_id)
     }
     return ()
   }
@@ -340,11 +725,13 @@ async fn handle_rebase(args : Array[String]) -> Unit raise Error {
   if do_abort {
     if @bitlib.is_interactive_rebase_in_progress(rfs, git_dir) {
       @bitlib.interactive_rebase_abort_impl(wfs, rfs, root)
+      rebase_clear_signing_state(wfs, git_dir)
       print_line("Rebase aborted")
     } else {
       @bitlib.rebase_abort(fs, fs, root) catch {
         _ => @bitlib.clear_rebase_state(fs, fs, git_dir)
       }
+      rebase_clear_signing_state(wfs, git_dir)
       print_line("Rebase aborted")
     }
     return ()
@@ -352,6 +739,7 @@ async fn handle_rebase(args : Array[String]) -> Unit raise Error {
   // Handle --skip
   if do_skip {
     if @bitlib.is_interactive_rebase_in_progress(rfs, git_dir) {
+      let state_before = @bitlib.load_interactive_rebase_state(rfs, git_dir)
       let msg_editor = make_message_editor_callback(fs, git_dir)
       let exec_runner = make_exec_runner_callback(root)
       let result = @bitlib.interactive_rebase_skip_impl(
@@ -361,10 +749,53 @@ async fn handle_rebase(args : Array[String]) -> Unit raise Error {
         msg_editor,
         exec_runner=Some(exec_runner),
       )
+      if should_sign {
+        match state_before {
+          Some(state) =>
+            ignore(
+              rebase_sign_complete_interactive_result(
+                fs,
+                rfs,
+                root,
+                git_dir,
+                state.onto,
+                result,
+                effective_signing_key,
+                commit_algo,
+              ),
+            )
+          None => ()
+        }
+      }
+      rebase_update_signing_state_for_interactive_result(
+        wfs, git_dir, should_sign, effective_signing_key, result,
+      )
       print_interactive_rebase_result(result)
     } else {
+      let state_before = @bitlib.load_rebase_state(rfs, git_dir)
       let result = @bitlib.rebase_skip(fs, fs, root)
-      print_rebase_result(result)
+      let signed_id = if should_sign {
+        match state_before {
+          Some(state) =>
+            rebase_sign_complete_result(
+              fs,
+              rfs,
+              root,
+              git_dir,
+              state.onto,
+              result,
+              effective_signing_key,
+              commit_algo,
+            )
+          None => None
+        }
+      } else {
+        None
+      }
+      rebase_update_signing_state_for_result(
+        wfs, git_dir, should_sign, effective_signing_key, result,
+      )
+      print_rebase_result_with_commit(result, signed_id)
     }
     return ()
   }
@@ -478,24 +909,50 @@ async fn handle_rebase(args : Array[String]) -> Unit raise Error {
       root_mode~,
       rebase_merges~,
     )
+    if should_sign {
+      ignore(
+        rebase_sign_complete_interactive_result(
+          fs, rfs, root, git_dir, onto_id, result, effective_signing_key, commit_algo,
+        ),
+      )
+    }
+    rebase_update_signing_state_for_interactive_result(
+      wfs, git_dir, should_sign, effective_signing_key, result,
+    )
     print_interactive_rebase_result(result)
     // Autostash pop on success
     if autostash_oid is Some(_) && result.status is @bitlib.IRBComplete {
       rebase_autostash_pop(wfs, rfs, root)
     }
   } else {
-    let result = match onto {
+    let (base_id, result) = match onto {
       Some(o) => {
         let onto_id = @bitrepo.rev_parse(fs, git_dir, o)
         guard onto_id is Some(oid) else {
           raise @bitcore.GitError::InvalidObject("unknown revision: \{o}")
         }
-        @bitlib.rebase_start_with_onto(fs, fs, root, oid, id, force_rebase~)
+        (
+          oid,
+          @bitlib.rebase_start_with_onto(fs, fs, root, oid, id, force_rebase~),
+        )
       }
       None =>
-        @bitlib.rebase_start_with_onto(fs, fs, root, id, id, force_rebase~)
+        (
+          id,
+          @bitlib.rebase_start_with_onto(fs, fs, root, id, id, force_rebase~),
+        )
     }
-    print_rebase_result(result)
+    let signed_id = if should_sign {
+      rebase_sign_complete_result(
+        fs, rfs, root, git_dir, base_id, result, effective_signing_key, commit_algo,
+      )
+    } else {
+      None
+    }
+    rebase_update_signing_state_for_result(
+      wfs, git_dir, should_sign, effective_signing_key, result,
+    )
+    print_rebase_result_with_commit(result, signed_id)
     // Autostash pop on success
     if autostash_oid is Some(_) &&
       result.status is @bitlib.RebaseStatus::Complete {
@@ -1238,16 +1695,25 @@ fn cleanup_rebase_dir(
 }
 
 ///|
-async fn print_rebase_result(result : @bitlib.RebaseResult) -> Unit {
+async fn print_rebase_result_with_commit(
+  result : @bitlib.RebaseResult,
+  commit_id_override : @bitcore.ObjectId?,
+) -> Unit {
   match result.status {
-    @bitlib.RebaseStatus::Complete =>
-      match result.commit_id {
+    @bitlib.RebaseStatus::Complete => {
+      let display_commit_id = if commit_id_override is Some(id) {
+        Some(id)
+      } else {
+        result.commit_id
+      }
+      match display_commit_id {
         Some(id) => {
           let short = String::unsafe_substring(id.to_hex(), start=0, end=7)
           print_line("Successfully rebased and updated refs. [\{short}]")
         }
         None => print_line("Successfully rebased.")
       }
+    }
     @bitlib.RebaseStatus::NothingToRebase =>
       print_line("Current branch is up to date.")
     @bitlib.RebaseStatus::Conflict => {
@@ -1263,6 +1729,11 @@ async fn print_rebase_result(result : @bitlib.RebaseResult) -> Unit {
       print_line("To skip this commit, run \"git rebase --skip\".")
     }
   }
+}
+
+///|
+async fn print_rebase_result(result : @bitlib.RebaseResult) -> Unit {
+  print_rebase_result_with_commit(result, None)
 }
 
 ///|

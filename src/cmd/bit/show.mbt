@@ -1,20 +1,17 @@
 ///|
 
 ///|
-fn show_format_requests_signature_display(format : String) -> Bool {
+fn show_format_requests_signature_placeholder(format : String) -> Bool {
   format.contains("%G")
 }
 
 ///|
-fn show_args_request_signature_display(args : Array[String]) -> Bool {
+fn show_args_request_signature_placeholder(args : Array[String]) -> Bool {
   let mut i = 0
   while i < args.length() {
     let arg = args[i]
-    if arg == "--show-signature" {
-      return true
-    }
     if (arg == "--pretty" || arg == "--format") && i + 1 < args.length() {
-      if show_format_requests_signature_display(args[i + 1]) {
+      if show_format_requests_signature_placeholder(args[i + 1]) {
         return true
       }
       i += 2
@@ -22,15 +19,84 @@ fn show_args_request_signature_display(args : Array[String]) -> Bool {
     }
     if arg.has_prefix("--pretty=") {
       let value = String::unsafe_substring(arg, start=9, end=arg.length())
-      if show_format_requests_signature_display(value) {
+      if show_format_requests_signature_placeholder(value) {
         return true
       }
     }
     if arg.has_prefix("--format=") {
       let value = String::unsafe_substring(arg, start=9, end=arg.length())
-      if show_format_requests_signature_display(value) {
+      if show_format_requests_signature_placeholder(value) {
         return true
       }
+    }
+    i += 1
+  }
+  false
+}
+
+///|
+fn show_args_signature_display_override(args : Array[String]) -> Bool? {
+  let mut display_override : Bool? = None
+  for arg in args {
+    match arg {
+      "--show-signature" => display_override = Some(true)
+      "--no-show-signature" => display_override = Some(false)
+      _ => ()
+    }
+  }
+  display_override
+}
+
+///|
+fn show_args_signature_display_enabled(
+  args : Array[String],
+  git_dir : String,
+) -> Bool {
+  match show_args_signature_display_override(args) {
+    Some(value) => value
+    None =>
+      git_dir.length() > 0 && show_signature_display_config_enabled(git_dir)
+  }
+}
+
+///|
+fn show_signature_format_value_needs_fallback(value : String) -> Bool {
+  let actual = if value.has_prefix("format:") {
+    String::unsafe_substring(value, start=7, end=value.length())
+  } else if value.has_prefix("tformat:") {
+    String::unsafe_substring(value, start=8, end=value.length())
+  } else {
+    value
+  }
+  actual == "oneline" || !actual.contains("%")
+}
+
+///|
+fn show_args_signature_display_needs_fallback(args : Array[String]) -> Bool {
+  let mut i = 0
+  while i < args.length() {
+    let arg = args[i]
+    match arg {
+      "--graph" | "--oneline" => return true
+      "--pretty" | "--format" if i + 1 < args.length() => {
+        if show_signature_format_value_needs_fallback(args[i + 1]) {
+          return true
+        }
+        i += 1
+      }
+      _ if arg.has_prefix("--pretty=") =>
+        if show_signature_format_value_needs_fallback(
+            String::unsafe_substring(arg, start=9, end=arg.length()),
+          ) {
+          return true
+        }
+      _ if arg.has_prefix("--format=") =>
+        if show_signature_format_value_needs_fallback(
+            String::unsafe_substring(arg, start=9, end=arg.length()),
+          ) {
+          return true
+        }
+      _ => ()
     }
     i += 1
   }
@@ -53,8 +119,18 @@ fn show_signature_display_config_enabled(git_dir : String) -> Bool {
 
 ///|
 fn show_requires_real_git(args : Array[String], git_dir? : String = "") -> Bool {
-  show_args_request_signature_display(args) ||
-  (git_dir.length() > 0 && show_signature_display_config_enabled(git_dir))
+  if show_args_request_signature_placeholder(args) {
+    return true
+  }
+  if show_args_signature_display_enabled(args, git_dir) {
+    if show_args_signature_display_needs_fallback(args) {
+      return true
+    }
+    if git_dir.length() > 0 && signing_format(git_dir) == "ssh" {
+      return true
+    }
+  }
+  false
 }
 
 ///|
@@ -123,6 +199,7 @@ priv struct ShowArgs {
   graph_requested : Bool
   walk_mode : Bool
   max_count : Int
+  show_signature_override : Bool?
 }
 
 ///|
@@ -388,6 +465,7 @@ fn show_parse_args(args : Array[String]) -> ShowArgs {
   let mut graph_requested = false
   let mut walk_mode = false
   let mut max_count = 1
+  let mut show_signature_override : Bool? = None
   let mut i = 0
   while i < args.length() {
     let arg = args[i]
@@ -398,6 +476,10 @@ fn show_parse_args(args : Array[String]) -> ShowArgs {
       arg == "-s" ||
       arg == "--no-patch" {
       quiet = true
+    } else if arg == "--show-signature" {
+      show_signature_override = Some(true)
+    } else if arg == "--no-show-signature" {
+      show_signature_override = Some(false)
     } else if arg == "--oneline" {
       oneline = true
     } else if arg == "--graph" {
@@ -414,10 +496,24 @@ fn show_parse_args(args : Array[String]) -> ShowArgs {
       pretty_format = Some(
         String::unsafe_substring(arg, start=17, end=arg.length()),
       )
+    } else if arg == "--pretty" && i + 1 < args.length() {
+      if args[i + 1] == "raw" {
+        pretty_raw = true
+      } else {
+        pretty_format = Some(args[i + 1])
+      }
+      i += 1
     } else if arg.has_prefix("--pretty=") {
       pretty_format = Some(
         String::unsafe_substring(arg, start=9, end=arg.length()),
       )
+    } else if arg == "--format" && i + 1 < args.length() {
+      if args[i + 1] == "raw" {
+        pretty_raw = true
+      } else {
+        pretty_format = Some(args[i + 1])
+      }
+      i += 1
     } else if arg.has_prefix("--format=") {
       pretty_format = Some(
         String::unsafe_substring(arg, start=9, end=arg.length()),
@@ -467,6 +563,7 @@ fn show_parse_args(args : Array[String]) -> ShowArgs {
     graph_requested,
     walk_mode,
     max_count,
+    show_signature_override,
   }
 }
 
@@ -476,6 +573,18 @@ fn show_lines_to_block(lines : Array[String]) -> String {
     ""
   } else {
     lines.join("\n") + "\n"
+  }
+}
+
+///|
+fn show_prefix_signature_lines(
+  block : String,
+  signature_lines : Array[String],
+) -> String {
+  if signature_lines.length() == 0 {
+    block
+  } else {
+    show_lines_to_block(signature_lines) + block
   }
 }
 
@@ -552,6 +661,7 @@ fn show_render_commit_block(
   fs : &@bitcore.RepoFileSystem,
   commit_id : @bitcore.ObjectId,
   data : Bytes,
+  signature_lines : Array[String],
   pretty_raw : Bool,
   pretty_format : String?,
   quiet : Bool,
@@ -575,7 +685,7 @@ fn show_render_commit_block(
     if !text.has_suffix("\n") {
       block = block + "\n"
     }
-    return Some(block)
+    return Some(show_prefix_signature_lines(block, signature_lines))
   }
   if pretty_format is Some(fmt) {
     match fmt {
@@ -586,14 +696,31 @@ fn show_render_commit_block(
           show_info.timestamp,
           show_info.timezone,
         )
-        return Some("\{short} (\{title}, \{date})\n")
+        return Some(
+          show_prefix_signature_lines(
+            "\{short} (\{title}, \{date})\n",
+            signature_lines,
+          ),
+        )
       }
       "%h" => {
         let short = String::unsafe_substring(commit_id.to_hex(), start=0, end=7)
-        return Some(short + "\n")
+        return Some(show_prefix_signature_lines(short + "\n", signature_lines))
       }
-      "%H" => return Some(commit_id.to_hex() + "\n")
-      "%s" => return Some(show_first_message_line(show_info.message) + "\n")
+      "%H" =>
+        return Some(
+          show_prefix_signature_lines(
+            commit_id.to_hex() + "\n",
+            signature_lines,
+          ),
+        )
+      "%s" =>
+        return Some(
+          show_prefix_signature_lines(
+            show_first_message_line(show_info.message) + "\n",
+            signature_lines,
+          ),
+        )
       _ => {
         let commit_info = @bitcore.parse_commit(data)
         let format_data = parse_commit_format_data(
@@ -603,21 +730,34 @@ fn show_render_commit_block(
           commit_info.parents,
           {},
         )
-        return Some(format_commit_string(fmt, format_data))
+        return Some(
+          show_prefix_signature_lines(
+            format_commit_string(fmt, format_data),
+            signature_lines,
+          ),
+        )
       }
     }
   }
   if oneline {
     let short = String::unsafe_substring(commit_id.to_hex(), start=0, end=7)
-    return Some(short + " " + show_first_message_line(show_info.message) + "\n")
+    return Some(
+      show_prefix_signature_lines(
+        short + " " + show_first_message_line(show_info.message) + "\n",
+        signature_lines,
+      ),
+    )
   }
   let commit_info = @bitcore.parse_commit(data)
-  let lines : Array[String] = [
-    "commit \{commit_id.to_hex()}",
-    "Author: \{show_info.author}",
+  let lines : Array[String] = ["commit \{commit_id.to_hex()}"]
+  for line in signature_lines {
+    lines.push(line)
+  }
+  lines.push("Author: \{show_info.author}")
+  lines.push(
     "Date:   \{format_show_date(show_info.timestamp, show_info.timezone)}",
-    "",
-  ]
+  )
+  lines.push("")
   for line_view in show_info.message.split("\n") {
     lines.push("    \{line_view.to_string()}")
   }
@@ -649,12 +789,14 @@ fn show_render_commit_block(
 }
 
 ///|
-fn show_render_object_block(
-  fs : &@bitcore.RepoFileSystem,
+async fn show_render_object_block(
+  fs : OsFs,
+  root : String,
   git_dir : String,
   spec : String,
   id : @bitcore.ObjectId,
   db : @bitlib.ObjectDb,
+  show_signature : Bool,
   pretty_raw : Bool,
   pretty_format : String?,
   quiet : Bool,
@@ -675,12 +817,18 @@ fn show_render_object_block(
           show_render_tree_lines(spec, @bitcore.parse_tree(o.data)),
         ),
       )
-    @bitcore.ObjectType::Commit =>
+    @bitcore.ObjectType::Commit => {
+      let signature_lines = if show_signature {
+        log_collect_commit_signature_output_lines(fs, root, git_dir, db, id)
+      } else {
+        []
+      }
       show_render_commit_block(
         db,
         fs,
         id,
         o.data,
+        signature_lines,
         pretty_raw,
         pretty_format,
         quiet,
@@ -689,6 +837,7 @@ fn show_render_object_block(
         grep_pattern_type,
         grep_ignore_case,
       )
+    }
     @bitcore.ObjectType::Tag => {
       let tag_info = show_parse_tag_info(o.data)
       guard tag_info is Some(info) else {
@@ -698,10 +847,12 @@ fn show_render_object_block(
       }
       let target_block = show_render_object_block(
         fs,
+        root,
         git_dir,
         spec,
         info.target,
         db,
+        show_signature,
         pretty_raw,
         pretty_format,
         quiet,
@@ -751,6 +902,10 @@ async fn handle_show(args : Array[String]) -> Unit raise Error {
     git_dir,
     options.grep_pattern_type_override,
   )
+  let show_signature = match options.show_signature_override {
+    Some(value) => value
+    None => show_signature_display_config_enabled(git_dir)
+  }
   let db = @bitlib.ObjectDb::load(fs, git_dir)
   if options.walk_mode {
     let targets = log_resolve_targets(
@@ -793,12 +948,24 @@ async fn handle_show(args : Array[String]) -> Unit raise Error {
       let obj = db.get(fs, entry.id)
       guard obj is Some(o) else { continue }
       guard o.obj_type == @bitcore.ObjectType::Commit else { continue }
+      let signature_lines = if show_signature {
+        log_collect_commit_signature_output_lines(
+          fs,
+          root,
+          git_dir,
+          db,
+          entry.id,
+        )
+      } else {
+        []
+      }
       match
         show_render_commit_block(
           db,
           fs,
           entry.id,
           o.data,
+          signature_lines,
           options.pretty_raw,
           options.pretty_format,
           options.quiet,
@@ -833,10 +1000,12 @@ async fn handle_show(args : Array[String]) -> Unit raise Error {
     match
       show_render_object_block(
         fs,
+        root,
         git_dir,
         target,
         resolved_id,
         db,
+        show_signature,
         options.pretty_raw,
         options.pretty_format,
         options.quiet,

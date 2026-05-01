@@ -30,16 +30,6 @@ async fn delegate_blame_to_real_git(args : Array[String], cwd : String) -> Unit 
 }
 
 ///|
-fn blame_has_textconv_args(args : Array[String]) -> Bool {
-  for arg in args {
-    if arg == "--textconv" || arg == "--no-textconv" {
-      return true
-    }
-  }
-  false
-}
-
-///|
 fn blame_builtin_supports_args(
   fs : &@bitcore.RepoFileSystem,
   root : String,
@@ -59,7 +49,13 @@ fn blame_builtin_supports_args(
       continue
     }
     match arg {
-      "-l" | "--incremental" | "-w" | "-M" | "-C" => i += 1
+      "-l"
+      | "--incremental"
+      | "-w"
+      | "-M"
+      | "-C"
+      | "--textconv"
+      | "--no-textconv" => i += 1
       "-L" => {
         if i + 1 >= args.length() {
           return false
@@ -79,40 +75,6 @@ fn blame_builtin_supports_args(
     }
   }
   positional_count == 1
-}
-
-///|
-fn blame_extract_target_path(
-  root : String,
-  fs : &@bitcore.RepoFileSystem,
-  args : Array[String],
-) -> String? {
-  let mut file_path : String? = None
-  let mut i = 0
-  while i < args.length() {
-    let arg = args[i]
-    match arg {
-      "--" => {
-        if i + 1 < args.length() {
-          return Some(args[i + 1])
-        }
-        return file_path
-      }
-      "-L" if i + 1 < args.length() => i += 2
-      _ if arg.has_prefix("-L") => i += 1
-      _ if !arg.has_prefix("-") => {
-        if file_path is None {
-          let test_path = root + "/" + arg
-          if fs.is_file(test_path) {
-            file_path = Some(arg)
-          }
-        }
-        i += 1
-      }
-      _ => i += 1
-    }
-  }
-  file_path
 }
 
 ///|
@@ -175,22 +137,48 @@ fn blame_read_path_diff_driver(
 }
 
 ///|
-fn blame_path_uses_textconv(
+fn blame_resolve_textconv_command(
   fs : &@bitcore.RepoFileSystem,
   root : String,
   git_dir : String,
   path : String,
-) -> Bool {
+) -> String? {
   match blame_read_path_diff_driver(fs, root, path) {
     Some(driver) => {
       let config_path = git_dir + "/config"
       let section = "diff \"" + driver + "\""
       match @bitlib.read_config_value(fs, config_path, section, "textconv") {
-        Some(cmd) => trim_string(cmd).length() > 0
-        None => false
+        Some(cmd) => {
+          let trimmed = trim_string(cmd)
+          if trimmed.length() > 0 {
+            Some(trimmed)
+          } else {
+            None
+          }
+        }
+        None => None
       }
     }
-    None => false
+    None => None
+  }
+}
+
+///|
+fn blame_effective_textconv_command(
+  fs : &@bitcore.RepoFileSystem,
+  root : String,
+  git_dir : String,
+  path : String,
+  textconv_override : Bool?,
+) -> String? {
+  match textconv_override {
+    Some(enabled) =>
+      if enabled {
+        blame_resolve_textconv_command(fs, root, git_dir, path)
+      } else {
+        None
+      }
+    None => blame_resolve_textconv_command(fs, root, git_dir, path)
   }
 }
 
@@ -242,13 +230,7 @@ fn blame_repo_requires_real_git(
   if blame_repo_prefers_real_git(fs, git_dir) {
     return true
   }
-  if blame_has_textconv_args(args) {
-    return true
-  }
-  match blame_extract_target_path(root, fs, args) {
-    Some(path) => blame_path_uses_textconv(fs, root, git_dir, path)
-    None => false
-  }
+  false
 }
 
 ///|
@@ -268,6 +250,7 @@ async fn handle_blame(args : Array[String]) -> Unit raise Error {
   let mut ignore_whitespace = false
   let mut detect_moves = false
   let mut detect_copies = false
+  let mut textconv_override : Bool? = None
   let mut line_start = 0
   let mut line_end = 0
   let mut commit_ref = "HEAD"
@@ -299,6 +282,14 @@ async fn handle_blame(args : Array[String]) -> Unit raise Error {
       }
       "-C" => {
         detect_copies = true
+        i += 1
+      }
+      "--textconv" => {
+        textconv_override = Some(true)
+        i += 1
+      }
+      "--no-textconv" => {
+        textconv_override = Some(false)
         i += 1
       }
       "-L" if i + 1 < args.length() => {
@@ -342,8 +333,11 @@ async fn handle_blame(args : Array[String]) -> Unit raise Error {
   let blame_opts = BlameOptions::new(
     ignore_whitespace, detect_moves, detect_copies,
   )
+  let textconv_command = blame_effective_textconv_command(
+    rfs, root, git_dir, path, textconv_override,
+  )
   let blame_lines = compute_blame_with_opts(
-    rfs, git_dir, root, commit_ref, path, blame_opts,
+    fs, rfs, git_dir, root, commit_ref, path, blame_opts, textconv_command,
   )
   // Apply line range filter
   let filtered = if line_start > 0 {
@@ -429,13 +423,15 @@ fn parse_line_range(range : String) -> (Int, Int) {
 }
 
 ///|
-fn compute_blame_with_opts(
+async fn compute_blame_with_opts(
+  fs : OsFs,
   rfs : &@bitcore.RepoFileSystem,
   git_dir : String,
   root : String,
   commit_ref : String,
   file_path : String,
   opts : BlameOptions,
+  textconv_command : String?,
 ) -> Array[BlameLine] raise Error {
   let db = @bitlib.ObjectDb::load(rfs, git_dir)
   // Get target commit
@@ -444,7 +440,9 @@ fn compute_blame_with_opts(
     raise @bitcore.GitError::InvalidObject("unknown revision: \{commit_ref}")
   }
   // Get file content at target commit
-  let file_content = get_file_at_commit(db, rfs, tid, file_path)
+  let file_content = blame_get_file_at_commit_for_display(
+    fs, db, rfs, root, git_dir, tid, file_path, textconv_command,
+  )
   guard file_content is Some(content) else {
     raise @bitcore.GitError::InvalidObject("file not found: \{file_path}")
   }
@@ -463,8 +461,9 @@ fn compute_blame_with_opts(
   let result : Array[BlameLine] = []
   for line_idx in 0..<lines.length() {
     let line = lines[line_idx]
-    let blame = find_line_origin_with_opts(
-      db, rfs, history, file_path, line, line_idx, opts, other_files,
+    let blame = blame_find_line_origin_with_opts(
+      fs, db, rfs, root, git_dir, history, file_path, line, line_idx, opts, other_files,
+      textconv_command,
     )
     result.push(
       BlameLine::new(
@@ -478,7 +477,6 @@ fn compute_blame_with_opts(
       ),
     )
   }
-  ignore(root)
   result
 }
 
@@ -542,12 +540,47 @@ fn collect_files_in_tree(
 }
 
 ///|
+async fn blame_get_file_at_commit_for_display(
+  fs : OsFs,
+  db : @bitlib.ObjectDb,
+  rfs : &@bitcore.RepoFileSystem,
+  root : String,
+  git_dir : String,
+  commit_id : @bitcore.ObjectId,
+  file_path : String,
+  textconv_command : String?,
+) -> String? raise Error {
+  let data = get_file_blob_at_commit(db, rfs, commit_id, file_path)
+  guard data is Some(blob_data) else { return None }
+  let display_data = match textconv_command {
+    Some(command) =>
+      cat_file_run_textconv(fs, root, git_dir, command, blob_data)
+    None => blob_data
+  }
+  display_data |> decode_bytes |> Some
+}
+
+///|
 fn get_file_at_commit(
   db : @bitlib.ObjectDb,
   rfs : &@bitcore.RepoFileSystem,
   commit_id : @bitcore.ObjectId,
   file_path : String,
 ) -> String? raise Error {
+  let data = get_file_blob_at_commit(db, rfs, commit_id, file_path)
+  match data {
+    Some(blob_data) => blob_data |> decode_bytes |> Some
+    None => None
+  }
+}
+
+///|
+fn get_file_blob_at_commit(
+  db : @bitlib.ObjectDb,
+  rfs : &@bitcore.RepoFileSystem,
+  commit_id : @bitcore.ObjectId,
+  file_path : String,
+) -> Bytes? raise Error {
   let obj = db.get(rfs, commit_id)
   guard obj is Some(o) else { return None }
   let info = @bitcore.parse_commit(o.data)
@@ -556,7 +589,7 @@ fn get_file_at_commit(
   guard blob_id is Some(bid) else { return None }
   let blob = db.get(rfs, bid)
   guard blob is Some(b) else { return None }
-  b.data |> decode_bytes |> Some
+  Some(b.data)
 }
 
 ///|
@@ -672,15 +705,19 @@ fn build_file_history(
 }
 
 ///|
-fn find_line_origin_with_opts(
+async fn blame_find_line_origin_with_opts(
+  fs : OsFs,
   db : @bitlib.ObjectDb,
   rfs : &@bitcore.RepoFileSystem,
+  root : String,
+  git_dir : String,
   history : Array[@bitcore.ObjectId],
   file_path : String,
   line : String,
   _line_idx : Int,
   opts : BlameOptions,
   other_files : Map[String, Array[(String, @bitcore.ObjectId)]],
+  textconv_command : String?,
 ) -> (@bitcore.ObjectId, String, Int64, String, Bool) raise Error {
   // Find oldest commit in history that contains this line
   let mut best_commit = history[0]
@@ -692,7 +729,9 @@ fn find_line_origin_with_opts(
   }
   for i in 0..<history.length() {
     let commit_id = history[i]
-    let content = get_file_at_commit(db, rfs, commit_id, file_path)
+    let content = blame_get_file_at_commit_for_display(
+      fs, db, rfs, root, git_dir, commit_id, file_path, textconv_command,
+    )
     match content {
       Some(c) => {
         let lines = split_lines(c)

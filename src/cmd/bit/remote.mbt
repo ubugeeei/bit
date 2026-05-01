@@ -3106,6 +3106,8 @@ async fn fetch_from_remote(
   explicit_refspecs : Array[String],
   update_head_ok? : Bool = false,
   filter? : @protocol.FilterSpec = @protocol.FilterSpec::NoFilter,
+  depth? : Int = 0,
+  unshallow? : Bool = false,
   force_transport? : Bool = false,
   quiet? : Bool = false,
 ) -> Unit raise Error {
@@ -3160,7 +3162,10 @@ async fn fetch_from_remote(
       }
       let mut prev_id : @bitcore.ObjectId? = None
       prev_id = @bitlib.resolve_ref(fs, git_dir, remote_ref) catch { _ => None }
-      if prev_id is Some(pid) && pid == commit_id {
+      let shallow_path = git_dir + "/shallow"
+      let updates_shallow_state = depth > 0 ||
+        (unshallow && fs.is_file(shallow_path))
+      if prev_id is Some(pid) && pid == commit_id && !updates_shallow_state {
         return ()
       }
       if !quiet {
@@ -3168,9 +3173,21 @@ async fn fetch_from_remote(
       }
       let pack = match transport {
         UploadPackTransport::Http =>
-          @bitnative.fetch_pack_http(remote_url, [commit_id], true, filter~)
+          @bitnative.fetch_pack_http(
+            remote_url,
+            [commit_id],
+            true,
+            depth=if unshallow { 0 } else { depth },
+            filter~,
+          )
         UploadPackTransport::Process =>
-          @bitnative.fetch_pack_process(remote_url, [commit_id], true, filter~)
+          @bitnative.fetch_pack_process(
+            remote_url,
+            [commit_id],
+            true,
+            depth=if unshallow { 0 } else { depth },
+            filter~,
+          )
       }
       if pack.length() > 0 {
         let objects = @pack.parse_packfile(pack)
@@ -3195,6 +3212,18 @@ async fn fetch_from_remote(
             "No packfile returned and missing object \{commit_id.to_hex()}",
           )
         }
+      }
+      if unshallow {
+        fs.remove_file(shallow_path) catch {
+          err => {
+            if @async.is_being_cancelled() || @async.is_cancellation_error(err) {
+              raise err
+            }
+            ()
+          }
+        }
+      } else if depth > 0 {
+        fs.write_string(shallow_path, commit_id.to_hex() + "\n")
       }
       write_ref_file(fs, git_dir, remote_ref, commit_id)
       if !quiet {

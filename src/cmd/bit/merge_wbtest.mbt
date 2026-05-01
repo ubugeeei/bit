@@ -11,12 +11,80 @@ test "split_cmdline quote validation" {
 }
 
 ///|
-test "merge: signing args require real git fallback" {
-  assert_true(merge_requires_real_git(["-S", "side"]))
-  assert_true(merge_requires_real_git(["--gpg-sign", "side"]))
-  assert_true(merge_requires_real_git(["--gpg-sign=key", "side"]))
-  assert_true(merge_requires_real_git(["--no-gpg-sign", "side"]))
+test "merge: signing args handled natively" {
+  assert_false(merge_requires_real_git(["-S", "side"]))
+  assert_false(merge_requires_real_git(["--gpg-sign", "side"]))
+  assert_false(merge_requires_real_git(["--gpg-sign=key", "side"]))
+  assert_false(merge_requires_real_git(["--no-gpg-sign", "side"]))
   assert_false(merge_requires_real_git(["side"]))
+}
+
+///|
+async test "merge: -S stores gpgsig header on merge commit" {
+  @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-merge-gpg-sign-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
+  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
+  let prev_git_dir = @sys.get_env_var("GIT_DIR")
+  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
+  defer add_test_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
+  defer add_test_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
+  defer add_test_restore_env("GIT_DIR", prev_git_dir)
+  defer add_test_restore_env("GIT_WORK_TREE", prev_work_tree)
+
+  grep_test_run_git(root, ["init", "--initial-branch=main", "-q", "repo"])
+  grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  grep_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+  let signer = root + "/fake-gpg.sh"
+  signing_wbtest_write_fake_gpg(fs, signer)
+  grep_test_run_git(repo_dir, ["config", "gpg.program", signer])
+  grep_test_run_git(repo_dir, ["config", "gpg.format", "openpgp"])
+
+  fs.write_string(repo_dir + "/base.txt", "base\n")
+  grep_test_run_git(repo_dir, ["add", "base.txt"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "base"])
+
+  grep_test_run_git(repo_dir, ["switch", "-q", "-c", "side"])
+  fs.write_string(repo_dir + "/side.txt", "side\n")
+  grep_test_run_git(repo_dir, ["add", "side.txt"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "side"])
+
+  grep_test_run_git(repo_dir, ["switch", "-q", "main"])
+  fs.write_string(repo_dir + "/main.txt", "main\n")
+  grep_test_run_git(repo_dir, ["add", "main.txt"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "main"])
+
+  @sys.unset_env_var("GIT_SHIM_CWD")
+  @sys.unset_env_var("GIT_DIR")
+  @sys.unset_env_var("GIT_WORK_TREE")
+  @sys.set_env_var("GIT_SHIM_PWD", repo_dir)
+
+  handle_merge(["-q", "-S", "-m", "signed merge", "side"]) catch {
+    err => fail("handle_merge failed: \{err}")
+  }
+
+  let git_dir = repo_dir + "/.git"
+  let head = @bitlib.resolve_head_commit(fs, git_dir).unwrap()
+  let db = @bitlib.ObjectDb::load_lazy(fs, git_dir)
+  let commit_obj = db.get(fs, head).unwrap()
+  let commit_text = @utf8.decode_lossy(commit_obj.data[:]).to_string()
+  let info = @bitcore.parse_commit(commit_obj.data)
+  assert_eq(info.parents.length(), 2)
+  assert_true(
+    commit_text.contains(
+      "gpgsig -----BEGIN PGP SIGNATURE-----\n abc123\n -----END PGP SIGNATURE-----\n",
+    ),
+  )
+
+  cleanup_tree(fs, root)
 }
 
 ///|
