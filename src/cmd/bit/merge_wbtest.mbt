@@ -180,6 +180,76 @@ async test "merge: command path supports strategy ours via fallback" {
 }
 
 ///|
+async test "merge: --no-commit with strategy ours keeps merge state" {
+  @bitnative.init_native_io()
+  cmd_bit_wbtest_env_lock.acquire()
+  defer cmd_bit_wbtest_env_lock.release()
+  let fs = OsFs::new()
+  let root = "/tmp/bit-test-merge-no-commit-ours-" +
+    get_current_timestamp().to_string()
+  cleanup_tree(fs, root)
+  fs.mkdir_p(root)
+  let repo_dir = root + "/repo"
+
+  let prev_shim_cwd = @sys.get_env_var("GIT_SHIM_CWD")
+  let prev_shim_pwd = @sys.get_env_var("GIT_SHIM_PWD")
+  let prev_git_dir = @sys.get_env_var("GIT_DIR")
+  let prev_work_tree = @sys.get_env_var("GIT_WORK_TREE")
+  defer add_test_restore_env("GIT_SHIM_CWD", prev_shim_cwd)
+  defer add_test_restore_env("GIT_SHIM_PWD", prev_shim_pwd)
+  defer add_test_restore_env("GIT_DIR", prev_git_dir)
+  defer add_test_restore_env("GIT_WORK_TREE", prev_work_tree)
+
+  grep_test_run_git(root, ["init", "--initial-branch=main", "-q", "repo"])
+  grep_test_run_git(repo_dir, ["config", "user.name", "Test User"])
+  grep_test_run_git(repo_dir, ["config", "user.email", "test@example.com"])
+
+  fs.write_string(repo_dir + "/file", "base\n")
+  grep_test_run_git(repo_dir, ["add", "file"])
+  grep_test_run_git(repo_dir, ["commit", "-q", "-m", "base"])
+
+  grep_test_run_git(repo_dir, ["checkout", "-q", "-b", "side"])
+  fs.write_string(repo_dir + "/file", "side\n")
+  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "side"])
+  let side_id = trim_string(
+    grep_test_git_stdout(repo_dir, ["rev-parse", "side"]),
+  )
+
+  grep_test_run_git(repo_dir, ["checkout", "-q", "main"])
+  fs.write_string(repo_dir + "/file", "main\n")
+  grep_test_run_git(repo_dir, ["commit", "-q", "-am", "main"])
+  let main_id = trim_string(
+    grep_test_git_stdout(repo_dir, ["rev-parse", "HEAD"]),
+  )
+
+  @sys.unset_env_var("GIT_SHIM_CWD")
+  @sys.unset_env_var("GIT_DIR")
+  @sys.unset_env_var("GIT_WORK_TREE")
+  @sys.set_env_var("GIT_SHIM_PWD", repo_dir)
+
+  handle_merge(["-q", "--no-commit", "-s", "ours", "side"]) catch {
+    err => fail("handle_merge failed: \{err}")
+  }
+
+  assert_eq(
+    trim_string(grep_test_git_stdout(repo_dir, ["rev-parse", "HEAD"])),
+    main_id,
+  )
+  assert_eq(decode_bytes(fs.read_file(repo_dir + "/file")), "main\n")
+  assert_eq(
+    trim_string(decode_bytes(fs.read_file(repo_dir + "/.git/MERGE_HEAD"))),
+    side_id,
+  )
+  assert_eq(
+    trim_string(decode_bytes(fs.read_file(repo_dir + "/.git/ORIG_HEAD"))),
+    main_id,
+  )
+  assert_true(fs.is_file(repo_dir + "/.git/MERGE_MSG"))
+
+  cleanup_tree(fs, root)
+}
+
+///|
 async test "merge: handles merge commit target natively" {
   @bitnative.init_native_io()
   let fs = OsFs::new()

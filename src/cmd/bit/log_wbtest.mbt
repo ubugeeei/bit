@@ -26,6 +26,57 @@ test "log: storage runtime not used for --all, --decorate, ranges" {
 }
 
 ///|
+test "log: raw rotate uses first path after target when absent" {
+  let zero = @bitcore.ObjectId::zero()
+  let raw_results : Array[LogRawResult] = [
+    {
+      sort_key: "sample1.t",
+      old_mode: "100644",
+      new_mode: "100644",
+      old_id: zero,
+      new_id: zero,
+      status: "M",
+      old_path: "sample1.t",
+      new_path: "sample1.t",
+    },
+    {
+      sort_key: "sample2.t",
+      old_mode: "100644",
+      new_mode: "100644",
+      old_id: zero,
+      new_id: zero,
+      status: "M",
+      old_path: "sample2.t",
+      new_path: "sample2.t",
+    },
+    {
+      sort_key: "sample4.t",
+      old_mode: "100644",
+      new_mode: "100644",
+      old_id: zero,
+      new_id: zero,
+      status: "M",
+      old_path: "sample4.t",
+      new_path: "sample4.t",
+    },
+  ]
+  let rotated = log_apply_rotate_skip_raw_results(
+    raw_results,
+    Some("sample3.t"),
+    None,
+  )
+  assert_eq(rotated.map(item => item.new_path), [
+    "sample4.t", "sample1.t", "sample2.t",
+  ])
+  let skipped = log_apply_rotate_skip_raw_results(
+    raw_results,
+    None,
+    Some("sample3.t"),
+  )
+  assert_eq(skipped.map(item => item.new_path), ["sample4.t"])
+}
+
+///|
 test "log: storage runtime disabled by repo config overrides" {
   let fs = @bitcore.TestFs::new()
   ignore(try? @bitlib.init_repo(fs, "/repo"))

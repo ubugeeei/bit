@@ -90,6 +90,19 @@ async fn delegate_merge_to_real_git(args : Array[String]) -> Unit {
 }
 
 ///|
+fn merge_write_pending_state(
+  fs : &@bitcore.FileSystem,
+  git_dir : String,
+  head_id : @bitcore.ObjectId,
+  target_id : @bitcore.ObjectId,
+  message : String,
+) -> Unit raise Error {
+  fs.write_string(git_dir + "/MERGE_HEAD", target_id.to_hex() + "\n")
+  fs.write_string(git_dir + "/ORIG_HEAD", head_id.to_hex() + "\n")
+  fs.write_string(git_dir + "/MERGE_MSG", message + "\n")
+}
+
+///|
 async fn handle_merge(args : Array[String]) -> Unit raise Error {
   let root = get_work_root()
   let git_dir = root + "/.git"
@@ -104,6 +117,7 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
   let mut message : String? = None
   let mut no_ff = false
   let mut ff_only = false
+  let mut no_commit = false
   let mut squash = false
   let mut quiet = false
   let mut abort_merge = false
@@ -150,6 +164,16 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
       }
       "--ff-only" => {
         ff_only = true
+        i += 1
+        continue
+      }
+      "--no-commit" => {
+        no_commit = true
+        i += 1
+        continue
+      }
+      "--commit" => {
+        no_commit = false
         i += 1
         continue
       }
@@ -426,6 +450,16 @@ async fn handle_merge(args : Array[String]) -> Unit raise Error {
     }
     let head_info = @bitcore.parse_commit(ho.data)
     let tree_id = head_info.tree
+    if no_commit {
+      merge_write_pending_state(wfs, git_dir, hid, tid, msg)
+      if !quiet {
+        print_line(
+          "Automatic merge went well; stopped before committing as requested",
+        )
+      }
+      ignore(allow_unrelated)
+      return
+    }
     let commit = @bitcore.Commit::new(
       tree_id,
       [hid, tid],

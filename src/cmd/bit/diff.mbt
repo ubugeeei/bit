@@ -419,6 +419,268 @@ fn diff_apply_relative_files(
 }
 
 ///|
+fn diff_parse_orderfile_patterns(content : String) -> Array[String] {
+  let patterns : Array[String] = []
+  for line_view in content.split("\n") {
+    let mut line = line_view.to_string()
+    if line.has_suffix("\r") {
+      line = String::unsafe_substring(line, start=0, end=line.length() - 1)
+    }
+    if line.length() == 0 || line.has_prefix("#") {
+      continue
+    }
+    if line.has_prefix("\\#") {
+      line = String::unsafe_substring(line, start=1, end=line.length())
+    }
+    patterns.push(line)
+  }
+  patterns
+}
+
+///|
+fn diff_order_pattern_matches(pattern : String, path : String) -> Bool {
+  let mut candidate = path
+  while candidate.length() > 0 {
+    if ls_files_simple_wildcard_match(candidate, pattern) {
+      return true
+    }
+    match candidate.rev_find("/") {
+      Some(idx) =>
+        candidate = String::unsafe_substring(candidate, start=0, end=idx)
+      None => return false
+    }
+  }
+  false
+}
+
+///|
+fn diff_order_rank(patterns : Array[String], path : String) -> Int {
+  for i in 0..<patterns.length() {
+    if diff_order_pattern_matches(patterns[i], path) {
+      return i
+    }
+  }
+  patterns.length()
+}
+
+///|
+fn diff_apply_orderfile_patterns(
+  files : Array[@bitdiff.DiffFile],
+  patterns : Array[String],
+) -> Array[@bitdiff.DiffFile] {
+  if patterns.length() == 0 || files.length() <= 1 {
+    return files
+  }
+  let ranked : Array[(Int, Int, @bitdiff.DiffFile)] = []
+  for i in 0..<files.length() {
+    ranked.push((diff_order_rank(patterns, files[i].path), i, files[i]))
+  }
+  ranked.sort_by(fn(a, b) { if a.0 == b.0 { a.1 - b.1 } else { a.0 - b.0 } })
+  let out : Array[@bitdiff.DiffFile] = []
+  for item in ranked {
+    out.push(item.2)
+  }
+  out
+}
+
+///|
+fn diff_compare_path(a : String, b : String) -> Int {
+  let ac = a.to_array()
+  let bc = b.to_array()
+  let n = if ac.length() < bc.length() { ac.length() } else { bc.length() }
+  for i in 0..<n {
+    let ai = ac[i].to_int()
+    let bi = bc[i].to_int()
+    if ai != bi {
+      return ai - bi
+    }
+  }
+  ac.length() - bc.length()
+}
+
+///|
+fn diff_sort_files_by_path(
+  files : Array[@bitdiff.DiffFile],
+) -> Array[@bitdiff.DiffFile] {
+  let sorted = files.copy()
+  sorted.sort_by(fn(a, b) { diff_compare_path(a.path, b.path) })
+  sorted
+}
+
+///|
+fn diff_find_rotate_index_for_paths(
+  paths : Array[String],
+  target : String,
+  strict : Bool,
+) -> Int? {
+  for i in 0..<paths.length() {
+    let cmp = diff_compare_path(paths[i], target)
+    if cmp == 0 {
+      return Some(i)
+    }
+    if !strict && cmp > 0 {
+      return Some(i)
+    }
+  }
+  None
+}
+
+///|
+fn diff_rotate_skip_target(rotate_to : String?, skip_to : String?) -> String? {
+  match skip_to {
+    Some(target) => Some(target)
+    None => rotate_to
+  }
+}
+
+///|
+fn diff_apply_rotate_skip_files(
+  files : Array[@bitdiff.DiffFile],
+  rotate_to : String?,
+  skip_to : String?,
+  strict? : Bool = true,
+) -> Array[@bitdiff.DiffFile]? {
+  let target = diff_rotate_skip_target(rotate_to, skip_to)
+  guard target is Some(target) else { return Some(files) }
+  if files.length() == 0 {
+    return Some(files)
+  }
+  let paths = files.map(file => file.path)
+  match diff_find_rotate_index_for_paths(paths, target, strict) {
+    None => if strict { None } else { Some(files) }
+    Some(idx) => {
+      let out : Array[@bitdiff.DiffFile] = []
+      for i in idx..<files.length() {
+        out.push(files[i])
+      }
+      if skip_to is None {
+        for i in 0..<idx {
+          out.push(files[i])
+        }
+      }
+      Some(out)
+    }
+  }
+}
+
+///|
+async fn diff_read_orderfile_patterns(
+  fs : &@bitcore.RepoFileSystem,
+  path : String,
+) -> Array[String] raise Error {
+  let data = if fs.is_file(path) {
+    fs.read_file(path)
+  } else {
+    let (code, stdout) = @process.collect_stdout(
+      "cat",
+      [path],
+      inherit_env=true,
+    ) catch {
+      err =>
+        raise @bitcore.GitError::IoError(
+          "failed to read orderfile '\{path}': \{err}",
+        )
+    }
+    if code != 0 {
+      raise @bitcore.GitError::IoError("failed to read orderfile '\{path}'")
+    }
+    stdout.binary()
+  }
+  let content = @utf8.decode_lossy(data[:])
+  diff_parse_orderfile_patterns(content)
+}
+
+///|
+fn diff_orderfile_from_config(
+  fs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+) -> String? {
+  match get_config_override("diff.orderfile") {
+    Some(value) if value.trim().length() > 0 => Some(value.trim().to_string())
+    Some(_) => None
+    None => {
+      let config_path = git_dir + "/config"
+      match diff_last_config_value(fs, config_path, "diff", "orderfile") {
+        Some(value) if value.trim().length() > 0 =>
+          Some(value.trim().to_string())
+        _ => None
+      }
+    }
+  }
+}
+
+///|
+fn diff_resolve_orderfile_path(
+  root : String,
+  raw : String,
+  from_config : Bool,
+) -> String {
+  if raw == "/dev/null" || raw.has_prefix("/") {
+    raw
+  } else if from_config {
+    normalize_path(root + "/" + raw)
+  } else {
+    diff_resolve_cli_path(root, raw)
+  }
+}
+
+///|
+async fn diff_resolve_orderfile_patterns(
+  fs : &@bitcore.RepoFileSystem,
+  root : String,
+  git_dir : String,
+  cli_orderfile : String?,
+) -> Array[String] raise Error {
+  match cli_orderfile {
+    Some(raw) =>
+      if raw == "/dev/null" {
+        []
+      } else {
+        diff_read_orderfile_patterns(
+          fs,
+          diff_resolve_orderfile_path(root, raw, false),
+        )
+      }
+    None =>
+      match diff_orderfile_from_config(fs, git_dir) {
+        Some(raw) =>
+          if raw == "/dev/null" {
+            []
+          } else {
+            diff_read_orderfile_patterns(
+              fs,
+              diff_resolve_orderfile_path(root, raw, true),
+            )
+          }
+        None => []
+      }
+  }
+}
+
+///|
+async fn diff_emit_or_write_lines(
+  fs : OsFs,
+  root : String,
+  output_path : String?,
+  lines : Array[String],
+) -> Unit raise Error {
+  match output_path {
+    Some(path) => {
+      let content = if lines.length() == 0 {
+        ""
+      } else {
+        lines.join("\n") + "\n"
+      }
+      fs.write_string(diff_resolve_cli_path(root, path), content)
+    }
+    None =>
+      for line in lines {
+        print_line(line)
+      }
+  }
+}
+
+///|
 struct DiffOutputSelection {
   mut patch : Bool
   mut patch_explicit : Bool
@@ -1381,8 +1643,39 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
   let mut relative_spec : String? = None
   let mut relative_disabled = false
   let mut ignore_all_space = false
+  let mut orderfile_arg : String? = None
+  let mut output_path : String? = None
+  let mut rotate_to : String? = None
+  let mut skip_to : String? = None
+  let mut combined_specs : (String, String, String)? = None
+  let mut expect_orderfile = false
+  let mut expect_output = false
+  let mut expect_rotate_to = false
+  let mut expect_skip_to = false
   let paths : Array[String] = []
   for arg in args {
+    if expect_orderfile {
+      orderfile_arg = Some(arg)
+      expect_orderfile = false
+      continue
+    }
+    if expect_output {
+      output_path = Some(arg)
+      expect_output = false
+      continue
+    }
+    if expect_rotate_to {
+      rotate_to = Some(arg)
+      skip_to = None
+      expect_rotate_to = false
+      continue
+    }
+    if expect_skip_to {
+      skip_to = Some(arg)
+      rotate_to = None
+      expect_skip_to = false
+      continue
+    }
     if parse_options && arg == "--" {
       parse_options = false
       continue
@@ -1465,6 +1758,10 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
         "--check" => check_mode = true
         "-w" | "--ignore-all-space" => ignore_all_space = true
         "--no-index" => no_index = true
+        "-O" => expect_orderfile = true
+        "--output" => expect_output = true
+        "--rotate-to" => expect_rotate_to = true
+        "--skip-to" => expect_skip_to = true
         "--relative" => {
           relative_disabled = false
           relative_spec = Some("")
@@ -1508,6 +1805,18 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
           relative_spec = Some(
             String::unsafe_substring(arg, start=11, end=arg.length()),
           )
+        }
+        _ if arg.has_prefix("-O") && arg.length() > 2 =>
+          orderfile_arg = Some(string_slice_from(arg, 2))
+        _ if arg.has_prefix("--output=") =>
+          output_path = Some(string_slice_from(arg, 9))
+        _ if arg.has_prefix("--rotate-to=") => {
+          rotate_to = Some(string_slice_from(arg, 12))
+          skip_to = None
+        }
+        _ if arg.has_prefix("--skip-to=") => {
+          skip_to = Some(string_slice_from(arg, 10))
+          rotate_to = None
         }
         _ if arg.has_prefix("-U") && arg.length() > 2 => {
           let num_str = string_slice_from(arg, 2)
@@ -1560,6 +1869,10 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
       paths.push(arg)
     }
   }
+  if expect_orderfile || expect_output || expect_rotate_to || expect_skip_to {
+    diff_print_usage()
+    @sys.exit(129)
+  }
   let relative_prefix = diff_resolve_relative_prefix(
     rfs, git_dir, root, relative_spec, relative_disabled,
   )
@@ -1582,13 +1895,16 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
     }
   } else if ref_target is None {
     let (revs, rest) = diff_extract_leading_revisions(
-      fs, rfs, root, git_dir, paths, 2,
+      fs, rfs, root, git_dir, paths, 3,
     )
     if revs.length() == 1 {
       ref_target = Some(revs[0])
       rest
     } else if revs.length() == 2 {
       range_spec = Some(revs[0] + ".." + revs[1])
+      rest
+    } else if revs.length() == 3 {
+      combined_specs = Some((revs[0], revs[1], revs[2]))
       rest
     } else {
       paths
@@ -1599,6 +1915,7 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
   if !no_index &&
     range_spec is None &&
     ref_target is None &&
+    combined_specs is None &&
     path_args.length() >= 2 &&
     diff_should_auto_no_index(fs, root, path_args[0], path_args[1]) {
     no_index = true
@@ -1640,12 +1957,14 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
       relative_prefix,
     )
     if !quiet {
-      for
-        line in diff_collect_no_index_output_lines(
+      diff_emit_or_write_lines(
+        fs,
+        root,
+        output_path,
+        diff_collect_no_index_output_lines(
           entries, output, context_lines, no_prefix,
-        ) {
-        print_line(line)
-      }
+        ),
+      )
     }
     if entries.length() > 0 {
       @sys.exit(1)
@@ -1682,47 +2001,54 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
     }
     _ => ()
   }
-  let all_files = match range_spec {
-    Some(spec) => {
-      if submodule_mode {
-        let handled = try_handle_submodule_range_diff(
-          fs, root, git_dir, repo_git_dir, spec,
-        )
-        if handled {
-          return
-        }
-      }
-      let db = @bitlib.ObjectDb::load(rfs, repo_git_dir)
-      match resolve_submodule_diff_range(db, rfs, repo_git_dir, spec) {
-        Some((old_id, new_id)) => {
-          let old_tree = resolve_diff_tree_id(db, rfs, old_id)
-          let new_tree = resolve_diff_tree_id(db, rfs, new_id)
-          match (old_tree, new_tree) {
-            (Some(ot), Some(nt)) =>
-              @bitdiff.diff_trees(rfs, repo_git_dir, Some(ot), nt, db~)
-            _ =>
+  let all_files = match combined_specs {
+    Some((base, parent_a, parent_b)) =>
+      diff_combined_against_parents(rfs, repo_git_dir, base, parent_a, parent_b)
+    None =>
+      match range_spec {
+        Some(spec) => {
+          if submodule_mode {
+            let handled = try_handle_submodule_range_diff(
+              fs, root, git_dir, repo_git_dir, spec,
+            )
+            if handled {
+              return
+            }
+          }
+          let db = @bitlib.ObjectDb::load(rfs, repo_git_dir)
+          match resolve_submodule_diff_range(db, rfs, repo_git_dir, spec) {
+            Some((old_id, new_id)) => {
+              let old_tree = resolve_diff_tree_id(db, rfs, old_id)
+              let new_tree = resolve_diff_tree_id(db, rfs, new_id)
+              match (old_tree, new_tree) {
+                (Some(ot), Some(nt)) =>
+                  @bitdiff.diff_trees(rfs, repo_git_dir, Some(ot), nt, db~)
+                _ =>
+                  raise @bitcore.GitError::InvalidObject(
+                    "unsupported diff range: " + spec,
+                  )
+              }
+            }
+            None =>
               raise @bitcore.GitError::InvalidObject(
                 "unsupported diff range: " + spec,
               )
           }
         }
         None =>
-          raise @bitcore.GitError::InvalidObject(
-            "unsupported diff range: " + spec,
-          )
-      }
-    }
-    None =>
-      if cached {
-        match ref_target {
-          Some(spec) => diff_cached_against_ref(fs, rfs, root, git_dir, spec)
-          None => @bitdiff.diff_index(fs, root)
-        }
-      } else {
-        match ref_target {
-          Some(spec) => diff_worktree_against_ref(fs, rfs, root, git_dir, spec)
-          None => @bitdiff.diff_worktree(fs, root)
-        }
+          if cached {
+            match ref_target {
+              Some(spec) =>
+                diff_cached_against_ref(fs, rfs, root, git_dir, spec)
+              None => @bitdiff.diff_index(fs, root)
+            }
+          } else {
+            match ref_target {
+              Some(spec) =>
+                diff_worktree_against_ref(fs, rfs, root, git_dir, spec)
+              None => @bitdiff.diff_worktree(fs, root)
+            }
+          }
       }
   }
   let normalized_path_args = normalize_ls_tree_filters(
@@ -1747,7 +2073,28 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
   } else {
     files
   }
-  let display_files = diff_apply_relative_files(files, relative_prefix)
+  let files = diff_sort_files_by_path(files)
+  let order_patterns = diff_resolve_orderfile_patterns(
+    rfs, root, git_dir, orderfile_arg,
+  )
+  let display_files = diff_apply_orderfile_patterns(
+    diff_apply_relative_files(files, relative_prefix),
+    order_patterns,
+  )
+  let rotated_display_files = diff_apply_rotate_skip_files(
+    display_files,
+    rotate_to,
+    skip_to,
+    strict=true,
+  )
+  if rotated_display_files is None {
+    match diff_rotate_skip_target(rotate_to, skip_to) {
+      Some(target) => eprint_line("fatal: No such path '\{target}' in the diff")
+      None => ()
+    }
+    @sys.exit(128)
+  }
+  let display_files = rotated_display_files.unwrap()
   // If an external diff program is configured, use it instead of built-in output
   match diff_get_external_command(rfs, git_dir) {
     Some(ext_cmd) if !check_mode && !quiet => {
@@ -1787,12 +2134,14 @@ async fn handle_diff(args : Array[String]) -> Unit raise Error {
     } else {
       []
     }
-    for
-      line in diff_collect_output_lines(
+    diff_emit_or_write_lines(
+      fs,
+      root,
+      output_path,
+      diff_collect_output_lines(
         display_files, output, context_lines, extra_unmerged,
-      ) {
-      print_line(line)
-    }
+      ),
+    )
   }
   if check_mode {
     if check_issues.length() > 0 {
@@ -2576,7 +2925,7 @@ async fn diff_worktree_against_ref(
       result.push(file)
     }
   }
-  result.sort_by(fn(a, b) { String::compare(a.path, b.path) })
+  result.sort_by(fn(a, b) { diff_compare_path(a.path, b.path) })
   result
 }
 
@@ -2609,6 +2958,66 @@ fn diff_cached_against_ref(
     missing_ok=true,
   )
   @bitdiff.diff_trees(rfs, git_dir, Some(old_tree_id), index_tree, db~)
+}
+
+///|
+fn diff_tree_id_for_spec(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  db : @bitlib.ObjectDb,
+  spec : String,
+) -> @bitcore.ObjectId raise Error {
+  let id = @bitrepo.rev_parse(rfs, git_dir, spec)
+  guard id is Some(id) else {
+    raise @bitcore.GitError::InvalidObject("unknown revision: " + spec)
+  }
+  let tree = resolve_diff_tree_id(db, rfs, id)
+  guard tree is Some(tree) else {
+    raise @bitcore.GitError::InvalidObject("object is not a tree-ish: " + spec)
+  }
+  tree
+}
+
+///|
+fn diff_combined_against_parents(
+  rfs : &@bitcore.RepoFileSystem,
+  git_dir : String,
+  base_spec : String,
+  parent_a_spec : String,
+  parent_b_spec : String,
+) -> Array[@bitdiff.DiffFile] raise Error {
+  let db = @bitlib.ObjectDb::load(rfs, git_dir)
+  let base_tree = diff_tree_id_for_spec(rfs, git_dir, db, base_spec)
+  let parent_a_tree = diff_tree_id_for_spec(rfs, git_dir, db, parent_a_spec)
+  let parent_b_tree = diff_tree_id_for_spec(rfs, git_dir, db, parent_b_spec)
+  let first = @bitdiff.diff_trees(
+    rfs,
+    git_dir,
+    Some(parent_a_tree),
+    base_tree,
+    db~,
+  )
+  let second = @bitdiff.diff_trees(
+    rfs,
+    git_dir,
+    Some(parent_b_tree),
+    base_tree,
+    db~,
+  )
+  let out : Array[@bitdiff.DiffFile] = []
+  let seen : Map[String, Bool] = {}
+  for file in first {
+    seen[file.path] = true
+    out.push(file)
+  }
+  for file in second {
+    if !seen.contains(file.path) {
+      seen[file.path] = true
+      out.push(file)
+    }
+  }
+  out.sort_by(fn(a, b) { diff_compare_path(a.path, b.path) })
+  out
 }
 
 ///|

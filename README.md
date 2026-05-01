@@ -211,7 +211,7 @@ run_storage_command(fs, fs, root, "commit", ["-m", "agent snapshot"])
 
 ## Compatibility
 
-bit implements 108 git commands natively with 973 git test suite tests passing. Key compatibility features:
+bit implements 108 git commands natively with 974 git test suite tests passing. Key compatibility features:
 
 - Git config: reads global aliases from `~/.gitconfig` (or `GIT_CONFIG_GLOBAL`).
 - `core.hooksPath`: custom hook directory support.

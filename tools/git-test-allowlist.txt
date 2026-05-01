@@ -846,6 +846,7 @@ t4052-stat-output.sh
 t4053-diff-no-index.sh
 t4054-diff-bogus-tree.sh
 t4055-diff-context.sh
+t4056-diff-order.sh
 t4057-diff-combined-paths.sh
 t4058-diff-duplicates.sh
 t4059-diff-submodule-not-initialized.sh

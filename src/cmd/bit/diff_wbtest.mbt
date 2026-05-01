@@ -32,6 +32,130 @@ test "diff: apply relative files filters outside prefix" {
 }
 
 ///|
+test "diff: orderfile patterns keep unmatched paths in normal order" {
+  let files : Array[@bitdiff.DiffFile] = [
+    {
+      path: "a.h",
+      kind: @bitdiff.DiffKind::Modified,
+      old_content: Some(@utf8.encode("1\n"[:])),
+      new_content: Some(@utf8.encode("2\n"[:])),
+      old_mode: Some(0o100644),
+      new_mode: Some(0o100644),
+    },
+    {
+      path: "b.c",
+      kind: @bitdiff.DiffKind::Modified,
+      old_content: Some(@utf8.encode("1\n"[:])),
+      new_content: Some(@utf8.encode("2\n"[:])),
+      old_mode: Some(0o100644),
+      new_mode: Some(0o100644),
+    },
+    {
+      path: "c/Makefile",
+      kind: @bitdiff.DiffKind::Modified,
+      old_content: Some(@utf8.encode("1\n"[:])),
+      new_content: Some(@utf8.encode("2\n"[:])),
+      old_mode: Some(0o100644),
+      new_mode: Some(0o100644),
+    },
+    {
+      path: "d.txt",
+      kind: @bitdiff.DiffKind::Modified,
+      old_content: Some(@utf8.encode("1\n"[:])),
+      new_content: Some(@utf8.encode("2\n"[:])),
+      old_mode: Some(0o100644),
+      new_mode: Some(0o100644),
+    },
+  ]
+  let patterns = diff_parse_orderfile_patterns(
+    "# comment\n*Makefile\n*.txt\n*.h\n\n",
+  )
+  assert_eq(patterns, ["*Makefile", "*.txt", "*.h"])
+  let ordered = diff_apply_orderfile_patterns(files, patterns)
+  assert_eq(ordered.map(file => file.path), [
+    "c/Makefile", "d.txt", "a.h", "b.c",
+  ])
+}
+
+///|
+test "diff: path compare sorts directories before later root files" {
+  assert_true(diff_compare_path("c/Makefile", "d.txt") < 0)
+  assert_eq(
+    diff_sort_files_by_path([
+      {
+        path: "d.txt",
+        kind: @bitdiff.DiffKind::Modified,
+        old_content: Some(@utf8.encode("1\n"[:])),
+        new_content: Some(@utf8.encode("2\n"[:])),
+        old_mode: Some(0o100644),
+        new_mode: Some(0o100644),
+      },
+      {
+        path: "c/Makefile",
+        kind: @bitdiff.DiffKind::Modified,
+        old_content: Some(@utf8.encode("1\n"[:])),
+        new_content: Some(@utf8.encode("2\n"[:])),
+        old_mode: Some(0o100644),
+        new_mode: Some(0o100644),
+      },
+    ]).map(file => file.path),
+    ["c/Makefile", "d.txt"],
+  )
+}
+
+///|
+test "diff: rotate strict and skip non-strict use git diffcore semantics" {
+  let files : Array[@bitdiff.DiffFile] = [
+    {
+      path: "sample1.t",
+      kind: @bitdiff.DiffKind::Modified,
+      old_content: Some(@utf8.encode("1\n"[:])),
+      new_content: Some(@utf8.encode("2\n"[:])),
+      old_mode: Some(0o100644),
+      new_mode: Some(0o100644),
+    },
+    {
+      path: "sample2.t",
+      kind: @bitdiff.DiffKind::Modified,
+      old_content: Some(@utf8.encode("1\n"[:])),
+      new_content: Some(@utf8.encode("2\n"[:])),
+      old_mode: Some(0o100644),
+      new_mode: Some(0o100644),
+    },
+    {
+      path: "sample4.t",
+      kind: @bitdiff.DiffKind::Modified,
+      old_content: Some(@utf8.encode("1\n"[:])),
+      new_content: Some(@utf8.encode("2\n"[:])),
+      old_mode: Some(0o100644),
+      new_mode: Some(0o100644),
+    },
+  ]
+  let rotated = diff_apply_rotate_skip_files(
+    files,
+    Some("sample2.t"),
+    None,
+    strict=true,
+  )
+  assert_true(rotated is Some(_))
+  assert_eq(rotated.unwrap().map(file => file.path), [
+    "sample2.t", "sample4.t", "sample1.t",
+  ])
+  let skipped = diff_apply_rotate_skip_files(
+    files,
+    None,
+    Some("sample3.t"),
+    strict=false,
+  )
+  assert_true(skipped is Some(_))
+  assert_eq(skipped.unwrap().map(file => file.path), ["sample4.t"])
+  assert_true(
+    diff_apply_rotate_skip_files(files, Some("sample3.t"), None, strict=true)
+    is None,
+  )
+}
+
+///|
 async test "diff: resolve relative prefix from cwd and config" {
   cmd_bit_wbtest_env_lock.acquire()
   defer cmd_bit_wbtest_env_lock.release()

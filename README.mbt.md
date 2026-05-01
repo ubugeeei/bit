@@ -189,7 +189,7 @@ The following features are not yet implemented. Flags listed here are parsed and
 | `add` | `-p` (patch), `-i` (interactive) - delegates to git |
 | `checkout` | `--patch`, `--ours`, `--theirs`, `--merge` |
 | `commit` | `-S` (GPG sign), `--fixup`, `--squash` |
-| `diff` | `-O` (orderfile), `--word-diff`, `--color-words` |
+| `diff` | `--word-diff`, `--color-words` |
 | `log` | `--graph` rendering (text output only) |
 | `merge` | Octopus merge (3+ heads), custom merge strategies |
 | `rebase` | `-i` (interactive), `--root`, `--autosquash` |
