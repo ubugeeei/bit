@@ -20,8 +20,8 @@ moon install mizchi/bit/cmd/bit
 
 - **WASI サンドボックス / インメモリ対応**: バックエンドに任意のストレージを持てます。ブラウザ上や WASM 環境で動作可能
 - **サブディレクトリチェックアウト**: svn などにあった機能。モノレポの一部だけを独立したリポジトリとして扱える
-- **bit/x/fs**: Git blob をバックエンドにした仮想ファイルシステム
-- **bit/x/kv**: P2P 同期可能な分散 KV ストア
+- **bit/vfs**: Git blob をバックエンドにした仮想ファイルシステム
+- **bit/x-kv**: P2P 同期可能な分散 KV ストア
 
 ## Subdirectory Clone
 
@@ -38,8 +38,8 @@ git だとこの `foo` だけをルートディレクトリとして取り出す
 というわけで、まずこれを実装しました。
 
 ```bash
-# mizchi/bit-vcs の src/x/fs だけを取り出す
-$ bit clone mizchi/bit-vcs:src/x/fs
+# mizchi/bit-vcs の src/vfs だけを取り出す
+$ bit clone mizchi/bit-vcs:src/vfs
 $ cd fs
 $ ls
 fs.mbt  types.mbt  ...
@@ -49,10 +49,10 @@ fs.mbt  types.mbt  ...
 
 ```bash
 # ブランチ指定
-$ bit clone mizchi/bit-vcs@main:src/x/fs
+$ bit clone mizchi/bit-vcs@main:src/vfs
 
 # コミット指定 (short-hash OK)
-$ bit clone mizchi/bit-vcs@<commit>:src/x/fs
+$ bit clone mizchi/bit-vcs@<commit>:src/vfs
 ```
 
 GitHub の URL をそのまま貼り付けることもできます。
@@ -95,7 +95,7 @@ warning: adding embedded git repository: fs
 
 ただし、bit で checkout したディレクトリの内部で git コマンドを使って操作した場合の挙動は十分に検証できていません。初期化時に pre-commit hook を注入して操作を止めるようにしていますが、完全に不整合を排除できるかは未検証です。不整合を避けたいなら、AI に渡す環境では `git` を `bit` にエイリアスするのが安全でしょう。
 
-## 実験的な機能: bit/x/fs
+## 実験的な機能: bit/vfs
 
 Git の blob をそのままファイルシステムのバックエンドに使う仮想ファイルシステムです。
 
@@ -112,7 +112,7 @@ Nix のようにハッシュ値で任意の状態を復元できます。この 
 
 この FS 内部では blob の解決を遅延できるように設計しているので、大規模なリポジトリでも必要な部分だけを読み込む、といった使い方ができます。
 
-## 実験的な機能: bit/x/kv
+## 実験的な機能: bit/x-kv
 
 Git blob を特定の P2P ノード間で共有することを想定した KV ストアです。ブロックチェーンから着想しています。
 
@@ -124,9 +124,9 @@ db.sync_with_peer(fs, fs, peer_url)  // Gossip protocol で同期
 
 何に使うかというと、多数の AI エージェントに特定の状態を基準にタスクを並列化させたとき、そのエージェント間で状態を高速に同期させる想定です。
 
-## 実験実装: bit/x/hub
+## 実験実装: bit/x-hub
 
-`bit/x/hub` は `bit issue` と `bit pr` の背後にあるコラボレーション層です。
+`bit/x-hub` は `bit issue` と `bit pr` の背後にあるコラボレーション層です。
 GitHub/GitLab に依存せず、ローカル GitHub のように使えるワークフローを提供します。Pull Request / Issue は `refs/notes/bit-hub` に記録され、`bit relay sync push/fetch` で同期できます。
 
 ```moonbit

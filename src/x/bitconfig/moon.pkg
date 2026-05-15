@@ -1,5 +1,0 @@
-import {
-  "bobzhang/toml" @toml,
-  "moonbitlang/x/sys" @sys,
-  "moonbitlang/x/fs" @fs,
-}

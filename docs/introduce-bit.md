@@ -20,8 +20,8 @@ moon install mizchi/bit/cmd/bit
 
 - **WASI sandbox / in-memory support**: Backend storage is pluggable. Runs in browsers and WASM environments.
 - **Subdirectory checkout**: A feature from svn/hg. Treat a subdirectory of a monorepo as an independent repo.
-- **bit/x/fs**: Virtual filesystem backed by Git blobs.
-- **bit/x/kv**: P2P-synced distributed KV store.
+- **bit/vfs**: Virtual filesystem backed by Git blobs.
+- **bit/x-kv**: P2P-synced distributed KV store.
 
 ## Subdirectory Clone
 
@@ -38,8 +38,8 @@ Git cannot extract `foo` as a new root. (hg/svn could.)
 So this is implemented as `bit clone` shorthand:
 
 ```bash
-# extract only src/x/fs from mizchi/bit-vcs
-$ bit clone mizchi/bit-vcs:src/x/fs
+# extract only src/vfs from mizchi/bit-vcs
+$ bit clone mizchi/bit-vcs:src/vfs
 $ cd fs
 $ ls
 fs.mbt  types.mbt  ...
@@ -49,10 +49,10 @@ You can pin a branch/commit with `@<ref>` (short-hash allowed).
 
 ```bash
 # branch
-$ bit clone mizchi/bit-vcs@main:src/x/fs
+$ bit clone mizchi/bit-vcs@main:src/vfs
 
 # commit (short-hash OK)
-$ bit clone mizchi/bit-vcs@<commit>:src/x/fs
+$ bit clone mizchi/bit-vcs@<commit>:src/vfs
 ```
 
 You can also paste a GitHub URL directly.
@@ -95,7 +95,7 @@ warning: adding embedded git repository: fs
 
 If you run git commands inside the subdir-clone, behavior is not fully validated. A pre-commit hook is injected to block operations, but total safety is unverified. If you want to avoid inconsistency in AI environments, alias `git` to `bit`.
 
-## Experimental: bit/x/fs
+## Experimental: bit/vfs
 
 A virtual filesystem backed by Git blobs.
 
@@ -110,7 +110,7 @@ Many AI agents already have snapshot features; this provides a guarantee at the 
 
 Blob resolution is lazy, so large repos can be accessed by reading only the needed parts.
 
-## Experimental: bit/x/kv
+## Experimental: bit/x-kv
 
 A KV store intended for sharing Git blobs between P2P nodes. Inspired by blockchains.
 
@@ -122,9 +122,9 @@ db.sync_with_peer(fs, fs, peer_url)  // Gossip protocol
 
 Use case: when many AI agents parallelize work from the same base state, they can synchronize that state quickly.
 
-## Experimental: bit/x/hub
+## Experimental: bit/x-hub
 
-`bit/x/hub` is the collaboration layer behind `bit issue` and `bit pr`.
+`bit/x-hub` is the collaboration layer behind `bit issue` and `bit pr`.
 It provides a local GitHub-like workflow without GitHub/GitLab. PRs and issues are stored under `refs/notes/bit-hub` and can be synchronized via `bit relay sync push/fetch`.
 
 ```moonbit
