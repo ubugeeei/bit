@@ -148,3 +148,17 @@
 
   color-scheme: dark;
 }
+
+/* ──────────────────────────────────────────────────────────────
+ * BRAND RULE — NO ITALIC.
+ * Browser defaults render <em>, <i>, <cite>, <dfn>, <address>, <var>
+ * in italic. We do not ship italic fonts, so the browser would
+ * synthesize a slanted face — on a geometric grotesque that reads
+ * as a deformed serif. We override globally and carry emphasis
+ * through weight + color instead.
+ * ────────────────────────────────────────────────────────────── */
+em, i, cite, dfn, address, var, q {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--fg);
+}
