@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="bit logomark">
-  <title>bit logomark</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="bit logo">
+  <title>bit logo</title>
   <desc>A triad of nodes — one pink source, two ink peers — connected by edges. Distributed communication.</desc>
   <!-- edges drawn first so node fills sit on top -->
   <g stroke="#0E0E12" stroke-width="3.5" stroke-linecap="round" fill="none">

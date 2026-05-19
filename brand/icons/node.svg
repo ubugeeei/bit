@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="node">
-  <title>node</title>
-  <desc>A single addressable unit. The atom of the system.</desc>
-  <rect x="3" y="3" width="58" height="58" fill="none" stroke="#0E0E12" stroke-width="2"/>
-  <circle cx="32" cy="32" r="10" fill="#FF2D6F"/>
-</svg>

@@ -20,7 +20,7 @@ Three rules that never bend:
 1. **No gradients.** Color is asserted, never blended.
 2. **No shadows.** Depth comes from layout, not light.
 3. **Geometric primitives only.** Circles, rectangles, lines. The wordmark is
-   constructed from the same primitives as the logomark — they are literally
+   constructed from the same primitives as the logo — they are literally
    the same alphabet.
 
 ---
@@ -29,15 +29,15 @@ Three rules that never bend:
 
 | Asset | File | Use |
 | --- | --- | --- |
-| Mark | [`logo/mark.svg`](logo/mark.svg) | App icon, avatar, square placements |
-| Mark, inverse | [`logo/mark-inverse.svg`](logo/mark-inverse.svg) | Dark surfaces |
-| Mark, mono | [`logo/mark-mono.svg`](logo/mark-mono.svg) | Single-channel printing, embossing |
+| Logo | [`logo/logo.svg`](logo/logo.svg) | App icon, avatar, square placements |
+| Logo, inverse | [`logo/logo-inverse.svg`](logo/logo-inverse.svg) | Dark surfaces |
+| Logo, mono | [`logo/logo-mono.svg`](logo/logo-mono.svg) | Single-channel printing, embossing |
 | Wordmark | [`logo/wordmark.svg`](logo/wordmark.svg) | In-line product name |
 | Wordmark, inverse | [`logo/wordmark-inverse.svg`](logo/wordmark-inverse.svg) | Dark surfaces |
 | Lockup, horizontal | [`logo/lockup-horizontal.svg`](logo/lockup-horizontal.svg) | Header, README hero |
 | Lockup, stacked | [`logo/lockup-stack.svg`](logo/lockup-stack.svg) | Square hero, cover art |
 
-**Mark composition** — three nodes form an asymmetric triad:
+**Logo composition** — three nodes form an asymmetric triad:
 
 - **pink filled** — *source*. The origin of truth.
 - **ink outlined** — *peer*. A replica that has not converged.
@@ -48,18 +48,18 @@ enemy of *distributed*.
 
 **Wordmark construction** — `b`, `i`, `t` are rectangles and circles. The
 tittle of the **i** is the pink dot. This is the brand's signature: a single
-node, a single source, a single bit. Use it as a reductive brand mark on its
-own where the full lockup would be too loud.
+node, a single source, a single bit. Use it as a reductive brand element on
+its own where the full lockup would be too loud.
 
 ### Clear space
 
 Minimum margin around any logo asset is **one source-node diameter** on every
-side. The mark must never be cropped by a frame closer than this. When in
+side. The logo must never be cropped by a frame closer than this. When in
 doubt, give it more room.
 
 ### Minimum size
 
-- Mark: **24×24 px** on screen, **8 mm** in print.
+- Logo: **24×24 px** on screen, **8 mm** in print.
 - Wordmark: **80 px** wide on screen.
 - Lockup: **160 px** wide on screen.
 
@@ -156,7 +156,6 @@ covers.
 
 | Icon | File | Concept |
 | --- | --- | --- |
-| ![node](icons/node.svg) | [`icons/node.svg`](icons/node.svg) | A single addressable unit |
 | ![source](icons/source.svg) | [`icons/source.svg`](icons/source.svg) | Origin broadcasting to peers |
 | ![distributed](icons/distributed.svg) | [`icons/distributed.svg`](icons/distributed.svg) | A constellation, no single owner |
 | ![communication](icons/communication.svg) | [`icons/communication.svg`](icons/communication.svg) | An edge — one bit of exchange |
@@ -168,7 +167,7 @@ lines, **one** pink element per icon, no gradient, no shadow, no perspective.
 
 ## Layout principles
 
-- **Asymmetry over symmetry.** Compositions should feel like the triad mark —
+- **Asymmetry over symmetry.** Compositions should feel like the triad logo —
   weighted, intentional, never centered for the sake of it.
 - **Rules, not boxes.** Use a 1 px ink rule to divide content. Cards with
   rounded corners are forbidden; use rectangular ink-stroked panels with
@@ -190,15 +189,14 @@ brand/
 │   ├── tokens.css             ← CSS custom properties + @import for fonts
 │   └── tokens.json            ← W3C-draft design tokens
 ├── logo/
-│   ├── mark.svg
-│   ├── mark-inverse.svg
-│   ├── mark-mono.svg
+│   ├── logo.svg
+│   ├── logo-inverse.svg
+│   ├── logo-mono.svg
 │   ├── wordmark.svg
 │   ├── wordmark-inverse.svg
 │   ├── lockup-horizontal.svg
 │   └── lockup-stack.svg
 ├── icons/
-│   ├── node.svg
 │   ├── source.svg
 │   ├── distributed.svg
 │   └── communication.svg
