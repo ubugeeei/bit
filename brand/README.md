@@ -148,23 +148,6 @@ sans — never substitute a "near miss" web font.
 
 ---
 
-## Iconography
-
-Concept icons are 64×64, drawn with the same primitives as the logo. They are
-not UI glyphs — they sit at section heads, in tables of contents, and on
-covers.
-
-| Icon | File | Concept |
-| --- | --- | --- |
-| ![source](icons/source.svg) | [`icons/source.svg`](icons/source.svg) | Origin broadcasting to peers |
-| ![distributed](icons/distributed.svg) | [`icons/distributed.svg`](icons/distributed.svg) | A constellation, no single owner |
-| ![communication](icons/communication.svg) | [`icons/communication.svg`](icons/communication.svg) | An edge — one bit of exchange |
-
-Drawing rules: 2 px stroke, square endpoints on rectangles, round caps on
-lines, **one** pink element per icon, no gradient, no shadow, no perspective.
-
----
-
 ## Layout principles
 
 - **Asymmetry over symmetry.** Compositions should feel like the triad logo —
@@ -196,10 +179,6 @@ brand/
 │   ├── wordmark-inverse.svg
 │   ├── lockup-horizontal.svg
 │   └── lockup-stack.svg
-├── icons/
-│   ├── source.svg
-│   ├── distributed.svg
-│   └── communication.svg
 ├── preview.html               ← visual showcase of the system
 └── docs/
     └── docs-template.html     ← documentation page applying the brand
